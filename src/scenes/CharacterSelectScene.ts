@@ -284,6 +284,8 @@ export class CharacterSelectScene extends Phaser.Scene {
   private makeYoshiArt(cardW: number): Phaser.GameObjects.Graphics {
     const g = this.add.graphics();
     const s = cardW >= 200 ? 3.2 : 2.8;
+    // Red saddle drawn FIRST — body covers the inner portion; left edge protrudes from lower back
+    g.fillStyle(0xdd2222); g.fillCircle(-17*s, 4*s, 9*s);
     // Green body
     g.fillStyle(0x33bb33);
     g.fillCircle(0, -12*s, 14*s);
@@ -298,8 +300,6 @@ export class CharacterSelectScene extends Phaser.Scene {
     g.fillStyle(0x000000);
     g.fillCircle(-7*s, -14*s, 2.5*s);
     g.fillCircle( 9*s, -14*s, 2.5*s);
-    // Red saddle
-    g.fillStyle(0xdd2222); g.fillCircle(0, -10*s, 8*s);
     // Orange boots
     g.fillStyle(0xdd5511); g.fillRect(-16*s, 16*s, 14*s, 8*s); g.fillRect(2*s, 16*s, 14*s, 8*s);
     // Yellow soles
@@ -341,8 +341,8 @@ export class CharacterSelectScene extends Phaser.Scene {
     // Blue cap
     g.fillStyle(0x2244cc); g.fillRect(-14*s, -20*s, 28*s, 8*s); g.fillRect(-17*s, -14*s, 34*s, 4*s);
     // S badge
-    g.fillStyle(0xffdd00); g.fillRect(-4*s, -19*s, 8*s, 6*s);
-    g.fillStyle(0xdd2200);
+    g.fillStyle(0xffffff); g.fillRect(-4*s, -19*s, 8*s, 6*s);
+    g.fillStyle(0x4488ee);
     g.fillRect(-4*s,-19*s,8*s,2*s); g.fillRect(-4*s,-16*s,8*s,2*s); g.fillRect(-4*s,-13*s,8*s,2*s);
     g.fillRect(-4*s,-19*s,2*s,3*s); g.fillRect(2*s,-16*s,2*s,3*s);
     // Dark hair
@@ -552,10 +552,10 @@ export class CharacterSelectScene extends Phaser.Scene {
     // Cream belly stripes
     g.fillStyle(0xffcc88);
     g.fillRect(-9*s,-3*s,18*s,3*s); g.fillRect(-9*s,1*s,18*s,3*s); g.fillRect(-9*s,5*s,18*s,3*s);
-    // Green shell peek (right side)
-    g.fillStyle(0x2a7a2a); g.fillRect(9*s,-5*s,11*s,17*s);
+    // Green shell peek (left side — back when facing right)
+    g.fillStyle(0x2a7a2a); g.fillRect(-20*s,-5*s,11*s,17*s);
     g.fillStyle(0xffeeaa); // shell spines
-    g.fillRect(11*s,-4*s,4*s,4*s); g.fillRect(11*s,1*s,4*s,4*s); g.fillRect(11*s,7*s,4*s,4*s);
+    g.fillRect(-18*s,-4*s,4*s,4*s); g.fillRect(-18*s,1*s,4*s,4*s); g.fillRect(-18*s,7*s,4*s,4*s);
 
     // Yellow legs
     g.fillStyle(0xddaa00);

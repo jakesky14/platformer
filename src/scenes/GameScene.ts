@@ -342,6 +342,10 @@ export class GameScene extends Phaser.Scene {
       }));
     } else if (this.character === "yoshi") {
       this.textures.addCanvas("player", this.makeCanvas(36, 42, ctx => {
+        // Red saddle drawn FIRST — body paints over it; only lower-left edge protrudes
+        // Left side = Yoshi's back when facing right; sprite flip keeps it on back either way
+        ctx.fillStyle = "#dd2222";
+        ctx.beginPath(); ctx.ellipse(3,28,11,8,0,0,Math.PI*2); ctx.fill();
         ctx.fillStyle = "#33bb33";                                                        // green body
         ctx.beginPath(); ctx.ellipse(18,14,14,13,0,0,Math.PI*2); ctx.fill();
         ctx.fillRect(4,20,28,14);
@@ -353,8 +357,6 @@ export class GameScene extends Phaser.Scene {
         ctx.fillStyle = "#000";                                                           // pupils
         ctx.beginPath(); ctx.arc(12,10,2.5,0,Math.PI*2); ctx.fill();
         ctx.beginPath(); ctx.arc(23,10,2.5,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#dd2222";                                                        // red saddle
-        ctx.beginPath(); ctx.ellipse(18,15, 8, 5,0,0,Math.PI*2); ctx.fill();
         ctx.fillStyle = "#dd5511"; ctx.fillRect(2,34,14, 8); ctx.fillRect(20,34,14, 8);  // boots
         ctx.fillStyle = "#ffcc22"; ctx.fillRect(2,39,14, 3); ctx.fillRect(20,39,14, 3);  // soles
       }));
@@ -376,8 +378,8 @@ export class GameScene extends Phaser.Scene {
     } else if (this.character === "smg4") {
       this.textures.addCanvas("player", this.makeCanvas(36, 42, ctx => {
         ctx.fillStyle = "#2244cc"; ctx.fillRect(4,0,28,8); ctx.fillRect(1,7,34,4);       // blue cap
-        ctx.fillStyle = "#ffdd00"; ctx.fillRect(14,1,8,6);                               // S badge bg
-        ctx.fillStyle = "#dd2200";                                                        // S shape
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(14,1,8,6);                               // S badge bg (white)
+        ctx.fillStyle = "#4488ee";                                                        // S shape (light blue)
         ctx.fillRect(14,1,8,2); ctx.fillRect(14,4,8,2); ctx.fillRect(14,6,8,2);          // horiz bars
         ctx.fillRect(14,1,2,3); ctx.fillRect(20,4,2,3);                                  // vert fills
         ctx.fillStyle = "#222200"; ctx.fillRect(6,9,24,4);                               // dark hair
@@ -438,10 +440,10 @@ export class GameScene extends Phaser.Scene {
         ctx.fillStyle = "#ddaa00"; ctx.fillRect(0,20,36,14);
         // Cream belly stripes
         ctx.fillStyle = "#ffcc88"; ctx.fillRect(8,21,20,3); ctx.fillRect(8,25,20,3);
-        // Green shell peek (right side)
-        ctx.fillStyle = "#2a7a2a"; ctx.fillRect(26,20,10,12);
+        // Green shell peek (left side — back when facing right)
+        ctx.fillStyle = "#2a7a2a"; ctx.fillRect(0,20,9,12);
         ctx.fillStyle = "#ffeeaa"; // shell spines
-        ctx.fillRect(28,20,3,4); ctx.fillRect(28,25,3,4); ctx.fillRect(28,30,3,4);
+        ctx.fillRect(1,20,3,4); ctx.fillRect(1,25,3,4); ctx.fillRect(1,30,3,4);
         // Yellow legs
         ctx.fillStyle = "#ddaa00"; ctx.fillRect(2,34,13,8); ctx.fillRect(21,34,13,8);
         // White claws (3 per foot)
