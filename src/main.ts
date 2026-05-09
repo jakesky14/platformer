@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { CutsceneScene } from "./scenes/CutsceneScene";
 import { CharacterSelectScene } from "./scenes/CharacterSelectScene";
 import { GameScene } from "./scenes/GameScene";
 
@@ -6,7 +7,7 @@ new Phaser.Game({
   type: Phaser.AUTO,
   width: 1280,
   height: 720,
-  backgroundColor: "#1a0a3a",
+  backgroundColor: "#000000",
   physics: {
     default: "arcade",
     arcade: {
@@ -14,5 +15,5 @@ new Phaser.Game({
       debug: false,
     },
   },
-  scene: [CharacterSelectScene, GameScene],
+  scene: [CutsceneScene, CharacterSelectScene, GameScene],
 });
