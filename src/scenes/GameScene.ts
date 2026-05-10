@@ -144,6 +144,7 @@ export class GameScene extends Phaser.Scene {
   private tvScreenImages: Phaser.GameObjects.Image[] = [];
   private warpGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
   private worldId = 0;
+  private fromWorld = -1;
   private nearWarpId = -1;
   private warpPromptText: Phaser.GameObjects.Text | null = null;
   private returnTVGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
@@ -155,9 +156,10 @@ export class GameScene extends Phaser.Scene {
     this.load.image("marios-mysteries", "/marios-mysteries.jpg");
   }
 
-  init(data: { character?: string; worldId?: number }) {
+  init(data: { character?: string; worldId?: number; fromWorld?: number }) {
     this.character = data?.character ?? "mario";
     this.worldId   = data?.worldId   ?? 0;
+    this.fromWorld = data?.fromWorld ?? -1;
     this.stats     = CHAR_STATS[this.character] ?? CHAR_STATS.mario;
     this.maxHp           = this.assistModeActive ? 6 : 3;
     this.dying           = false;
@@ -1587,7 +1589,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPlayer() {
-    this.player = this.physics.add.sprite(100, 600, "player");
+    // When returning from a world, spawn near the TV the player came from
+    let spawnX = 100;
+    if (this.fromWorld > 0) {
+      const tvIdx = this.fromWorld === 8 ? 0 : this.fromWorld;
+      if (tvIdx < TV_POSITIONS.length) spawnX = TV_POSITIONS[tvIdx].x;
+    }
+    this.player = this.physics.add.sprite(spawnX, 600, "player");
     this.player.setDepth(3);
     this.player.setCollideWorldBounds(true);
     (this.player.body as Phaser.Physics.Arcade.Body).setMaxVelocityX(700);
@@ -1834,7 +1842,11 @@ export class GameScene extends Phaser.Scene {
     this.dying = true;
     this.cameras.main.flash(500, 255, 255, 255);
     this.time.delayedCall(500, () => {
-      this.scene.start("GameScene", { character: this.character, worldId });
+      this.scene.start("GameScene", {
+        character: this.character,
+        worldId,
+        ...(worldId === 0 && { fromWorld: this.worldId }),
+      });
     });
   }
 
