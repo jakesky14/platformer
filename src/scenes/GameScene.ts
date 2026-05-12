@@ -50,7 +50,7 @@ const W1_FL        = GROUND_TOP;    // 680
 // main floor door x-positions
 const W1_BDOOR_X   = 160;           // bathroom door (leftmost in hall)
 const W1_KDOOR_X   = 430;           // kitchen door
-const W1_MAIN_DOOR_X = 565;         // archway separating hall ↔ main room
+// const W1_MAIN_DOOR_X = 565;      // archway removed per user request
 // kitchen sub-room (x=2100..3100)
 const W1_K_LEFT    = 2100;
 const W1_K_RIGHT   = 3100;
@@ -68,9 +68,9 @@ const W1_BROOM_LEFT    = 4600;
 const W1_BROOM_RIGHT   = 5600;
 const W1_BROOM_RETURN_X = 4625;     // exit door inside bedroom
 const W1_BROOM_SPAWN_X  = 4700;     // spawn x when entering bedroom
-const W1_BROOM_BACK_X   = 1450;     // main-floor x after leaving bedroom (just past archway)
+const W1_BROOM_BACK_X   = 1530;     // main-floor x after leaving bedroom (just past door)
 // house interior rooms
-const W1_BEDROOM_X = 1410;          // bedroom door x (main room → bedroom sub-room)
+const W1_BEDROOM_X = 1480;          // bedroom door x — past red chair right edge (1409)
 
 const GOOMBA_XS: number[] = [];
 const KOOPA_XS:  number[] = [];
@@ -163,6 +163,21 @@ export class GameScene extends Phaser.Scene {
   private settingsObjects: Phaser.GameObjects.GameObject[] = [];
   private dashPending      = false;
 
+  // ── World 9 mystery game state ────────────────────────────────────────────
+  private hasPhone          = false;
+  private holdingMallet     = false;
+  private tomatoSmashed     = false;
+  private meatballActive    = false;
+  private bathroomUnlocked  = false;
+  private bedroomUnlocked   = false;
+  private luigiGreeted      = false;
+  private phoneLog: string[] = [];
+  private phoneIconObj: Phaser.GameObjects.Text | null = null;
+  private kitchenSmashOverlay: Phaser.GameObjects.Graphics | null = null;
+  private dialogueBg: Phaser.GameObjects.Graphics | null = null;
+  private dialogueText: Phaser.GameObjects.Text | null = null;
+  private dialogueUntil = 0;
+
   // Yoshi-specific
   private yoshiStomach: "empty" | "goomba" | "koopa" = "empty";
   private yoshiIndicator: Phaser.GameObjects.Text | null = null;
@@ -205,6 +220,22 @@ export class GameScene extends Phaser.Scene {
     this.nearWarpId      = -1;
     this.warpPromptText  = null;
     this.returnTVGroup   = null;
+    // World 9 mystery state persists between room warps within worldId=9
+    if (this.worldId !== 9) {
+      this.hasPhone         = false;
+      this.holdingMallet    = false;
+      this.tomatoSmashed    = false;
+      this.meatballActive   = false;
+      this.bathroomUnlocked = false;
+      this.bedroomUnlocked  = false;
+      this.luigiGreeted     = false;
+      this.phoneLog         = [];
+    }
+    this.phoneIconObj        = null;
+    this.kitchenSmashOverlay = null;
+    this.dialogueBg          = null;
+    this.dialogueText        = null;
+    this.dialogueUntil       = 0;
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
@@ -1183,6 +1214,60 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── World 9 Z interactions ────────────────────────────────────────────────
+    if (this.worldId === 9 && this.character !== "yoshi" && Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+      const px = this.player.x, py = this.player.y;
+      const onMainFloor = px < 1920;
+      const inKitchen   = px >= W1_K_LEFT && px < W1_K_RIGHT;
+
+      // Phone pickup — on desk (DX=620)
+      if (!this.hasPhone && onMainFloor && Math.abs(px - 668) < 60 && py > W1_FL - 220) {
+        this.hasPhone = true;
+        if (this.phoneIconObj) {
+          this.phoneIconObj.setVisible(true);
+          (this.phoneIconObj.getData("gfx") as Phaser.GameObjects.Graphics)?.setVisible(true);
+        }
+        this.showDialogue("You picked up the phone!\nClues will be logged here automatically.", "#88ccff", 3500);
+      }
+
+      // Grab Luigi Meat Mallet
+      else if (inKitchen && this.luigiGreeted && !this.holdingMallet && !this.tomatoSmashed) {
+        const LX = W1_K_LEFT + 650;
+        if (Math.abs(px - LX) < 55) {
+          this.holdingMallet = true;
+          this.showDialogue("You grabbed Luigi! Walk to the tomatoes\nand press SHIFT to smash!", "#ffff44", 4000);
+        }
+      }
+
+      // Inspect meatball
+      else if (inKitchen && this.meatballActive) {
+        const CTX = W1_K_LEFT + 460;
+        if (Math.abs(px - (CTX + 35)) < 70) {
+          this.meatballActive = false;
+          this.addClue("The color RED — from Luigi's tomato sauce.");
+          this.showDialogue("Clue logged to phone:\n\"The color RED\"", "#ff6644", 4000);
+          // Luigi gives bathroom key
+          this.bathroomUnlocked = true;
+          this.time.delayedCall(1500, () => {
+            this.showDialogue("Luigi: Great work! Here's the bathroom key!", "#44ff44", 3500);
+          });
+        }
+      }
+    }
+
+    // ── World 9 SHIFT+mallet smash ────────────────────────────────────────────
+    if (this.worldId === 9 && this.holdingMallet && !this.tomatoSmashed) {
+      const px = this.player.x;
+      const CTX = W1_K_LEFT + 460;
+      if (Math.abs(px - (CTX + 35)) < 80 && Phaser.Input.Keyboard.JustDown(this.keyShift)) {
+        this.tomatoSmashed = true;
+        this.holdingMallet = false;
+        this.meatballActive = true;
+        this.kitchenSmashOverlay?.setVisible(true);
+        this.showDialogue("SMASH! Tomatoes crushed into sauce!\nInspect the meatball with Z.", "#ff4400", 3500);
+      }
+    }
+
     // ── Dash ─────────────────────────────────────────────────────────────────
     if (dashDown && this.canDash && !this.isDashing) {
       this.triggerDash(body);
@@ -1236,33 +1321,52 @@ export class GameScene extends Phaser.Scene {
             if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) this.enterWorld(9);
           }
         }
+        // World 9 — Luigi NPC dialogue (↓ near mallet in kitchen)
+        if (this.worldId === 9 && !promptVisible) {
+          const px = this.player.x, py = this.player.y;
+          const inKitchen = px >= W1_K_LEFT && px < W1_K_RIGHT;
+          if (inKitchen) {
+            const LX = W1_K_LEFT + 650;
+            if (Math.abs(px - LX) < 55 && py > W1_FL - 180) {
+              promptX = LX; promptY = W1_FL - 200; promptVisible = true;
+              if (Phaser.Input.Keyboard.JustDown(this.cursors.down) && !this.luigiGreeted) {
+                this.luigiGreeted = true;
+                this.showDialogue("Luigi: I need your help! I'm making red pasta\nsauce! Can you make some for me?", "#44ff44", 5000);
+              }
+            }
+          }
+        }
         // World 1 room doors
         if (this.worldId === 9 && !promptVisible) {
           const px = this.player.x, py = this.player.y;
           const nearFloor = py > W1_FL - 110;
-          type DoorWarp = { dx: number; destX: number; destY: number };
+          type DoorWarp = { dx: number; destX: number; destY: number; locked?: boolean; lockMsg?: string };
           const doors: DoorWarp[] = [
-            { dx: W1_KDOOR_X,          destX: W1_KSPAWN_X,       destY: W1_FL - 50 },
-            { dx: W1_BDOOR_X,          destX: W1_BSPAWN_X,       destY: W1_FL - 50 },
-            { dx: W1_BEDROOM_X,        destX: W1_BROOM_SPAWN_X,  destY: W1_FL - 50 },
-            { dx: W1_KRETURN_X,        destX: W1_KBACK_X,        destY: W1_FL - 50 },
-            { dx: W1_BRETURN_X,        destX: W1_BBACK_X,        destY: W1_FL - 50 },
-            { dx: W1_BROOM_RETURN_X,   destX: W1_BROOM_BACK_X,   destY: W1_FL - 50 },
+            { dx: W1_KDOOR_X,        destX: W1_KSPAWN_X,      destY: W1_FL - 50 },
+            { dx: W1_BDOOR_X,        destX: W1_BSPAWN_X,      destY: W1_FL - 50, locked: !this.bathroomUnlocked, lockMsg: "The bathroom is locked.\nFind the key first!" },
+            { dx: W1_BEDROOM_X,      destX: W1_BROOM_SPAWN_X, destY: W1_FL - 50, locked: !this.bedroomUnlocked,  lockMsg: "The bedroom is locked." },
+            { dx: W1_KRETURN_X,      destX: W1_KBACK_X,       destY: W1_FL - 50 },
+            { dx: W1_BRETURN_X,      destX: W1_BBACK_X,       destY: W1_FL - 50 },
+            { dx: W1_BROOM_RETURN_X, destX: W1_BROOM_BACK_X,  destY: W1_FL - 50 },
           ];
           for (const door of doors) {
             if (nearFloor && Math.abs(px - door.dx) < 36) {
               promptX = door.dx; promptY = W1_FL - 112;
               promptVisible = true;
               if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
-                this.player.setPosition(door.destX, door.destY);
-                (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-                const dx = door.destX;
-                let bL = 0, bW = 1920;
-                if (dx >= W1_K_LEFT && dx < W1_K_RIGHT)           { bL = W1_K_LEFT;    bW = W1_K_RIGHT - W1_K_LEFT; }
-                else if (dx >= W1_B_LEFT && dx < W1_B_RIGHT)      { bL = W1_B_LEFT;    bW = W1_B_RIGHT - W1_B_LEFT; }
-                else if (dx >= W1_BROOM_LEFT && dx < W1_BROOM_RIGHT) { bL = W1_BROOM_LEFT; bW = W1_BROOM_RIGHT - W1_BROOM_LEFT; }
-                this.cameras.main.setBounds(bL, 0, bW, LEVEL_H);
-                this.cameras.main.centerOn(door.destX, door.destY);
+                if (door.locked) {
+                  this.showDialogue(door.lockMsg ?? "Locked!", "#ff8844", 2500);
+                } else {
+                  this.player.setPosition(door.destX, door.destY);
+                  (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+                  const dx = door.destX;
+                  let bL = 0, bW = 1920;
+                  if (dx >= W1_K_LEFT && dx < W1_K_RIGHT)              { bL = W1_K_LEFT;     bW = W1_K_RIGHT - W1_K_LEFT; }
+                  else if (dx >= W1_B_LEFT && dx < W1_B_RIGHT)         { bL = W1_B_LEFT;     bW = W1_B_RIGHT - W1_B_LEFT; }
+                  else if (dx >= W1_BROOM_LEFT && dx < W1_BROOM_RIGHT) { bL = W1_BROOM_LEFT; bW = W1_BROOM_RIGHT - W1_BROOM_LEFT; }
+                  this.cameras.main.setBounds(bL, 0, bW, LEVEL_H);
+                  this.cameras.main.centerOn(door.destX, door.destY);
+                }
               }
               break;
             }
@@ -1274,6 +1378,13 @@ export class GameScene extends Phaser.Scene {
         if (promptVisible) this.warpPromptText.setPosition(promptX, promptY).setVisible(true);
         else               this.warpPromptText.setVisible(false);
       }
+    }
+
+    // ── Auto-hide dialogue box ────────────────────────────────────────────────
+    if (this.dialogueBg && this.dialogueText) {
+      const expired = this.time.now > this.dialogueUntil;
+      this.dialogueBg.setVisible(!expired);
+      this.dialogueText.setVisible(!expired);
     }
   }
 
@@ -1654,13 +1765,16 @@ export class GameScene extends Phaser.Scene {
   private buildPlayer() {
     // When returning from a world, spawn near the TV the player came from
     let spawnX = 100;
+    let spawnY = 600;
     if (this.worldId === 9) spawnX = 960;              // house interior: spawn at purple door
-    else if (this.worldId === 8 && this.fromWorld === 9) spawnX = 975;  // front of house door
+    else if (this.worldId === 8 && this.fromWorld === 9) {
+      spawnX = 940; spawnY = 320;  // top of hill, in front of house door
+    }
     else if (this.fromWorld > 0) {
       const tvIdx = this.fromWorld === 8 ? 0 : this.fromWorld;
       if (tvIdx < TV_POSITIONS.length) spawnX = TV_POSITIONS[tvIdx].x;
     }
-    this.player = this.physics.add.sprite(spawnX, 600, "player");
+    this.player = this.physics.add.sprite(spawnX, spawnY, "player");
     this.player.setDepth(3);
     this.player.setCollideWorldBounds(true);
     (this.player.body as Phaser.Physics.Arcade.Body).setMaxVelocityX(700);
@@ -1871,16 +1985,6 @@ export class GameScene extends Phaser.Scene {
       }
       g.fillStyle(0xdd1800); g.fillRect(0, FL, 1920, 5);
 
-      // ── Archway (hall ↔ main room, x=W1_MAIN_DOOR_X=565) ────────────────────
-      {
-        const CDX = W1_MAIN_DOOR_X;
-        g.fillStyle(0x8b5e1a);
-        g.fillRect(CDX - 5,  CEIL, 10, FL - CEIL - 92);
-        g.fillRect(CDX + 35, CEIL, 10, FL - CEIL - 92);
-        g.fillRect(CDX - 5,  CEIL, 50, 12);
-        g.fillStyle(0x7a5014); g.fillEllipse(CDX + 20, FL - 92, 50, 28);
-      }
-
       // ── BATHROOM DOOR (x=W1_BDOOR_X=160) ─────────────────────────────────────
       {
         const BDX = W1_BDOOR_X;
@@ -1941,6 +2045,12 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xbbaa33); g.fillRect(DX + 76, FL - 200,  5, 18);
         g.fillStyle(0xffee55); g.fillEllipse(DX + 79, FL - 200, 22, 14);
         g.fillStyle(0xffff88, 0.35); g.fillCircle(DX + 79, FL - 186, 16);
+        // Phone on desk (press Z to pick up)
+        const PX = DX + 58, PY = FL - 192;
+        g.fillStyle(0x1a1a1a); g.fillRoundedRect(PX, PY, 18, 28, 3);
+        g.fillStyle(0x3388ff); g.fillRoundedRect(PX + 2, PY + 3, 14, 18, 2);
+        g.fillStyle(0x222222); g.fillCircle(PX + 9, PY + 24, 2);
+        this.add.text(DX + 67, FL - 210, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(2);
       }
 
       // ── WOODEN STOOL (STX=810) ───────────────────────────────────────────────
@@ -2025,9 +2135,9 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xddaaff); g.fillRect(CDX - 26, FL - 116, 52, 12);
         this.add.text(CDX, FL - 113, "BEDROOM", { fontSize: "8px", color: "#551188", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
       }
-      // Purple wall to the right of the bedroom door (up to right edge of main floor)
-      g.fillStyle(0x6633cc); g.fillRect(W1_BEDROOM_X + 40, CEIL, 1920 - W1_BEDROOM_X - 40, FL - CEIL);
-      g.fillStyle(0x5522aa); g.fillRect(W1_BEDROOM_X + 40, FL - 16, 1920 - W1_BEDROOM_X - 40, 16);
+      // Small purple strip immediately right of the door frame (visual cue only)
+      g.fillStyle(0x6633cc); g.fillRect(W1_BEDROOM_X + 30, CEIL, 50, FL - CEIL);
+      g.fillStyle(0x5522aa); g.fillRect(W1_BEDROOM_X + 30, FL - 16, 50, 16);
 
       // ═══ KITCHEN SUB-ROOM (x=W1_K_LEFT..W1_K_RIGHT) ════════════════════════
       {
@@ -2231,27 +2341,32 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xffcc44); g.fillRect(TRX - 28, TRY - 108, 56, 34);
         g.fillStyle(0xffdd66); g.fillRect(TRX - 24, TRY - 106, 42, 26);
 
-        // Boopkins (Fishy Boopkins, jellyfish creature)
+        // Boopkins — matches playable sprite, scaled 2x (36x42 → 72x84)
         {
-          const BKX = BREX + 540, BKY = FL;
-          g.fillStyle(0x2288dd); g.fillCircle(BKX, BKY - 40, 24);
-          g.fillStyle(0x44aaff); g.fillCircle(BKX - 4, BKY - 44, 18);
-          g.fillStyle(0xffffff); g.fillCircle(BKX - 9, BKY - 44, 9);
-          g.fillStyle(0xffffff); g.fillCircle(BKX + 9, BKY - 44, 9);
-          g.fillStyle(0x2255cc); g.fillCircle(BKX - 8, BKY - 44, 6);
-          g.fillStyle(0x2255cc); g.fillCircle(BKX + 8, BKY - 44, 6);
-          g.fillStyle(0x000000); g.fillCircle(BKX - 7, BKY - 43, 4);
-          g.fillStyle(0x000000); g.fillCircle(BKX + 9, BKY - 43, 4);
-          g.fillStyle(0xffffff); g.fillCircle(BKX - 6, BKY - 45, 1.5);
-          g.fillStyle(0xffffff); g.fillCircle(BKX + 10, BKY - 45, 1.5);
-          g.fillStyle(0x1a6699); g.fillRect(BKX - 4, BKY - 34, 8, 3);
-          g.fillStyle(0x1a77bb);
-          for (let t = 0; t < 5; t++) {
-            const tx = BKX - 16 + t * 8;
-            const th = 10 + (t === 2 ? 4 : 0);
-            g.fillRect(tx, BKY - 20, 4, th);
-            g.fillCircle(tx + 2, BKY - 20 + th + 2, 3);
-          }
+          const BKX = BREX + 500, BKY = FL;
+          // Blue mohawk spike
+          g.fillStyle(0x3399cc); g.fillTriangle(BKX - 6, BKY - 74, BKX, BKY - 84, BKX + 6, BKY - 74);
+          // Round green body
+          g.fillStyle(0x55bb55); g.fillEllipse(BKX, BKY - 40, 60, 68);
+          // Light belly
+          g.fillStyle(0x88ee88); g.fillEllipse(BKX, BKY - 32, 36, 44);
+          // Fin arms
+          g.fillStyle(0x44aa44);
+          g.fillTriangle(BKX - 30, BKY - 46, BKX - 36, BKY - 60, BKX - 24, BKY - 42);
+          g.fillTriangle(BKX + 30, BKY - 46, BKX + 36, BKY - 60, BKX + 24, BKY - 42);
+          // Big white eyes
+          g.fillStyle(0xffffff); g.fillCircle(BKX - 14, BKY - 56, 14); g.fillCircle(BKX + 14, BKY - 56, 14);
+          // Black pupils
+          g.fillStyle(0x000000); g.fillCircle(BKX - 14, BKY - 56, 8); g.fillCircle(BKX + 14, BKY - 56, 8);
+          // Eye shine
+          g.fillStyle(0xffffff); g.fillCircle(BKX - 18, BKY - 60, 3); g.fillCircle(BKX + 10, BKY - 60, 3);
+          // Wide red mouth
+          g.fillStyle(0xcc1111); g.fillEllipse(BKX, BKY - 28, 32, 20);
+          // Teeth
+          g.fillStyle(0xffffff);
+          g.fillRect(BKX - 12, BKY - 36, 6, 6); g.fillRect(BKX - 2, BKY - 36, 6, 6); g.fillRect(BKX + 8, BKY - 36, 6, 6);
+          // Shoes
+          g.fillStyle(0x333333); g.fillRect(BKX - 20, BKY - 10, 16, 10); g.fillRect(BKX + 4, BKY - 10, 16, 10);
         }
       }
 
@@ -2428,13 +2543,14 @@ export class GameScene extends Phaser.Scene {
         const w = this.platforms.create(x, LEVEL_H / 2, "ground-tile") as Phaser.Physics.Arcade.Sprite;
         w.setAlpha(0).setDisplaySize(24, LEVEL_H).refreshBody();
       };
-      wall(1920);           // right edge of main floor
-      wall(W1_K_LEFT);           // left edge of kitchen
-      wall(W1_K_RIGHT);          // right edge of kitchen
-      wall(W1_B_LEFT);           // left edge of bathroom
-      wall(W1_B_RIGHT);          // right edge of bathroom
-      wall(W1_BROOM_LEFT);       // left edge of bedroom sub-room
-      wall(W1_BROOM_RIGHT);      // right edge of bedroom sub-room
+      wall(1920);                   // right edge of main floor
+      wall(W1_BEDROOM_X + 52);     // blocks walking past bedroom door
+      wall(W1_K_LEFT);             // left edge of kitchen
+      wall(W1_K_RIGHT);            // right edge of kitchen
+      wall(W1_B_LEFT);             // left edge of bathroom
+      wall(W1_B_RIGHT);            // right edge of bathroom
+      wall(W1_BROOM_LEFT);         // left edge of bedroom sub-room
+      wall(W1_BROOM_RIGHT);        // right edge of bedroom sub-room
 
       // Bedroom sub-room floor tiles
       for (let rx = W1_BROOM_LEFT; rx < W1_BROOM_RIGHT; rx += 64)
@@ -2465,6 +2581,28 @@ export class GameScene extends Phaser.Scene {
       dz.setAlpha(0).setDisplaySize(44, 86).refreshBody();
       dz.setData("hw", 22);
       dz.setData("hh", 43);
+
+      // Kitchen smash overlay — covers tomatoes with meatball when activated
+      {
+        const CTX = W1_K_LEFT + 460, CTY = W1_FL;
+        this.kitchenSmashOverlay = this.add.graphics().setVisible(false).setDepth(3);
+        // Erase tomato area (counter color)
+        this.kitchenSmashOverlay.fillStyle(0xe8e4d8); this.kitchenSmashOverlay.fillRect(CTX, CTY - 130, 90, 10);
+        // Meatball
+        this.kitchenSmashOverlay.fillStyle(0x883311); this.kitchenSmashOverlay.fillCircle(CTX + 35, CTY - 140, 18);
+        this.kitchenSmashOverlay.fillStyle(0xaa5533); this.kitchenSmashOverlay.fillCircle(CTX + 30, CTY - 144, 10);
+        this.kitchenSmashOverlay.fillStyle(0x662200); this.kitchenSmashOverlay.fillCircle(CTX + 41, CTY - 143, 7);
+        this.kitchenSmashOverlay.fillStyle(0x995522);
+        this.kitchenSmashOverlay.fillCircle(CTX + 28, CTY - 138, 4); this.kitchenSmashOverlay.fillCircle(CTX + 42, CTY - 138, 3);
+        // Sauce splatter
+        this.kitchenSmashOverlay.fillStyle(0xdd2200, 0.7);
+        this.kitchenSmashOverlay.fillCircle(CTX + 18, CTY - 128, 5); this.kitchenSmashOverlay.fillCircle(CTX + 52, CTY - 127, 4);
+        this.kitchenSmashOverlay.fillCircle(CTX + 10, CTY - 133, 3); this.kitchenSmashOverlay.fillCircle(CTX + 60, CTY - 132, 4);
+        this.kitchenSmashOverlay.fillStyle(0xff4400, 0.5);
+        this.kitchenSmashOverlay.fillCircle(CTX + 35, CTY - 126, 3); this.kitchenSmashOverlay.fillCircle(CTX + 55, CTY - 128, 3);
+        // "Z to inspect" label
+        this.add.text(CTX + 35, CTY - 165, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(4).setName("meatball-hint");
+      }
 
       return;
     }
@@ -2515,6 +2653,30 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private showDialogue(text: string, color: string, durationMs: number) {
+    // Reuse or create dialogue box (HUD-space, scroll-fixed)
+    if (!this.dialogueBg) {
+      this.dialogueBg = this.add.graphics().setScrollFactor(0).setDepth(15);
+    }
+    if (!this.dialogueText) {
+      this.dialogueText = this.add.text(640, 620, "", {
+        fontSize: "14px", align: "center",
+        stroke: "#000000", strokeThickness: 3,
+        backgroundColor: "#00000000",
+      }).setScrollFactor(0).setDepth(16).setOrigin(0.5, 1);
+    }
+    this.dialogueText.setText(text).setColor(color).setVisible(true);
+    const tw = this.dialogueText.width + 24, th = this.dialogueText.height + 14;
+    this.dialogueBg.clear().setVisible(true);
+    this.dialogueBg.fillStyle(0x000000, 0.78).fillRoundedRect(640 - tw / 2, 620 - th, tw, th, 6);
+    this.dialogueBg.lineStyle(2, 0xffffff, 0.3).strokeRoundedRect(640 - tw / 2, 620 - th, tw, th, 6);
+    this.dialogueUntil = this.time.now + durationMs;
+  }
+
+  private addClue(text: string) {
+    this.phoneLog.push(text);
+  }
+
   private setupInput() {
     this.cursors  = this.input.keyboard!.createCursorKeys();
     this.keyA     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A);
@@ -2523,7 +2685,7 @@ export class GameScene extends Phaser.Scene {
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.keyZ     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
     // Use event-driven flag so no keypress is ever missed between frames
-    this.keyShift.on("down", () => { this.dashPending = true; });
+    this.keyShift.on("down", () => { if (!this.holdingMallet) this.dashPending = true; });
   }
 
   private setupCamera() {
@@ -2542,6 +2704,22 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5, 1).setDepth(6).setVisible(false);
 
     this.buildHpDisplay();
+
+    if (this.worldId === 9) {
+      // Phone icon — hidden until player picks up the phone
+      const phoneX = 34 + this.maxHp * 30 + 12;
+      const pg = this.add.graphics().setScrollFactor(0).setDepth(10);
+      pg.fillStyle(0x1a1a1a); pg.fillRoundedRect(phoneX, 26, 18, 28, 3);
+      pg.fillStyle(0x3388ff); pg.fillRoundedRect(phoneX + 2, 29, 14, 18, 2);
+      pg.fillStyle(0x222222); pg.fillCircle(phoneX + 9, 50, 2);
+      this.phoneIconObj = this.add.text(phoneX + 9, 56, "PHONE", {
+        fontSize: "6px", color: "#88ccff", stroke: "#000", strokeThickness: 1,
+      }).setScrollFactor(0).setDepth(10).setOrigin(0.5, 0);
+      const phoneGroup = [pg, this.phoneIconObj];
+      phoneGroup.forEach(o => (o as Phaser.GameObjects.GameObject & { setVisible(v: boolean): void }).setVisible(this.hasPhone));
+      // Store reference to update visibility later
+      this.phoneIconObj.setData("gfx", pg);
+    }
 
     if (this.character === "yoshi") {
       this.yoshiIndicator = this.add.text(12, 62,
