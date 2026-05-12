@@ -43,6 +43,35 @@ const LEVEL_W    = 1920;
 const LEVEL_H    = 720;
 const GROUND_TOP = LEVEL_H - 40;
 
+// ── World 1 (Mario's Mysteries house) extended layout ─────────────────────────
+const W1_TOTAL_W   = 5600;          // physics + camera bound
+const W1_CEIL      = 100;
+const W1_FL        = GROUND_TOP;    // 680
+// main floor door x-positions
+const W1_BDOOR_X   = 160;           // bathroom door (leftmost in hall)
+const W1_KDOOR_X   = 430;           // kitchen door
+const W1_MAIN_DOOR_X = 565;         // archway separating hall ↔ main room
+// kitchen sub-room (x=2100..3100)
+const W1_K_LEFT    = 2100;
+const W1_K_RIGHT   = 3100;
+const W1_KRETURN_X = 2140;          // exit door inside kitchen
+const W1_KSPAWN_X  = 2200;          // spawn x when entering kitchen
+const W1_KBACK_X   = W1_KDOOR_X + 40;  // main-floor x after leaving kitchen
+// bathroom sub-room (x=3500..4500)
+const W1_B_LEFT    = 3500;
+const W1_B_RIGHT   = 4500;
+const W1_BRETURN_X = 3525;          // exit door inside bathroom
+const W1_BSPAWN_X  = 3580;          // spawn x when entering bathroom
+const W1_BBACK_X   = W1_BDOOR_X + 40;  // main-floor x after leaving bathroom
+// bedroom sub-room (x=4600..5600)
+const W1_BROOM_LEFT    = 4600;
+const W1_BROOM_RIGHT   = 5600;
+const W1_BROOM_RETURN_X = 4625;     // exit door inside bedroom
+const W1_BROOM_SPAWN_X  = 4700;     // spawn x when entering bedroom
+const W1_BROOM_BACK_X   = 1450;     // main-floor x after leaving bedroom (just past archway)
+// house interior rooms
+const W1_BEDROOM_X = 1410;          // bedroom door x (main room → bedroom sub-room)
+
 const GOOMBA_XS: number[] = [];
 const KOOPA_XS:  number[] = [];
 
@@ -182,7 +211,8 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     this.generateTextures();
-    this.physics.world.setBounds(0, 0, LEVEL_W, LEVEL_H);
+    const physW = this.worldId === 9 ? W1_TOTAL_W : LEVEL_W;
+    this.physics.world.setBounds(0, 0, physW, LEVEL_H);
 
     if (this.worldId === 0) {
       this.buildBackground();
@@ -190,7 +220,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.buildWorldBackground();
       this.buildWorldLevel(); // for worldId 8, calls buildReturnTV() internally
-      if (this.worldId !== 8) this.buildReturnTV();
+      if (this.worldId !== 8 && this.worldId !== 9) this.buildReturnTV();
     }
 
     this.buildPlayer();
@@ -1191,7 +1221,8 @@ export class GameScene extends Phaser.Scene {
               Math.abs(this.player.y - zone.y) < hh + 14) {
             promptX = zone.x; promptY = zone.y - hh - 8;
             promptVisible = true;
-            if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) this.enterWorld(0);
+            if (Phaser.Input.Keyboard.JustDown(this.cursors.down))
+              this.enterWorld(this.worldId === 9 ? 8 : 0);
             break;
           }
         }
@@ -1203,6 +1234,38 @@ export class GameScene extends Phaser.Scene {
             promptX = 940; promptY = 325;
             promptVisible = true;
             if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) this.enterWorld(9);
+          }
+        }
+        // World 1 room doors
+        if (this.worldId === 9 && !promptVisible) {
+          const px = this.player.x, py = this.player.y;
+          const nearFloor = py > W1_FL - 110;
+          type DoorWarp = { dx: number; destX: number; destY: number };
+          const doors: DoorWarp[] = [
+            { dx: W1_KDOOR_X,          destX: W1_KSPAWN_X,       destY: W1_FL - 50 },
+            { dx: W1_BDOOR_X,          destX: W1_BSPAWN_X,       destY: W1_FL - 50 },
+            { dx: W1_BEDROOM_X,        destX: W1_BROOM_SPAWN_X,  destY: W1_FL - 50 },
+            { dx: W1_KRETURN_X,        destX: W1_KBACK_X,        destY: W1_FL - 50 },
+            { dx: W1_BRETURN_X,        destX: W1_BBACK_X,        destY: W1_FL - 50 },
+            { dx: W1_BROOM_RETURN_X,   destX: W1_BROOM_BACK_X,   destY: W1_FL - 50 },
+          ];
+          for (const door of doors) {
+            if (nearFloor && Math.abs(px - door.dx) < 36) {
+              promptX = door.dx; promptY = W1_FL - 112;
+              promptVisible = true;
+              if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+                this.player.setPosition(door.destX, door.destY);
+                (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+                const dx = door.destX;
+                let bL = 0, bW = 1920;
+                if (dx >= W1_K_LEFT && dx < W1_K_RIGHT)           { bL = W1_K_LEFT;    bW = W1_K_RIGHT - W1_K_LEFT; }
+                else if (dx >= W1_B_LEFT && dx < W1_B_RIGHT)      { bL = W1_B_LEFT;    bW = W1_B_RIGHT - W1_B_LEFT; }
+                else if (dx >= W1_BROOM_LEFT && dx < W1_BROOM_RIGHT) { bL = W1_BROOM_LEFT; bW = W1_BROOM_RIGHT - W1_BROOM_LEFT; }
+                this.cameras.main.setBounds(bL, 0, bW, LEVEL_H);
+                this.cameras.main.centerOn(door.destX, door.destY);
+              }
+              break;
+            }
           }
         }
       }
@@ -1591,7 +1654,9 @@ export class GameScene extends Phaser.Scene {
   private buildPlayer() {
     // When returning from a world, spawn near the TV the player came from
     let spawnX = 100;
-    if (this.fromWorld > 0) {
+    if (this.worldId === 9) spawnX = 960;              // house interior: spawn at purple door
+    else if (this.worldId === 8 && this.fromWorld === 9) spawnX = 975;  // front of house door
+    else if (this.fromWorld > 0) {
       const tvIdx = this.fromWorld === 8 ? 0 : this.fromWorld;
       if (tvIdx < TV_POSITIONS.length) spawnX = TV_POSITIONS[tvIdx].x;
     }
@@ -1609,7 +1674,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildReturnTV() {
     // World 8: left base of hill; all others: near player spawn
-    const TX  = this.worldId === 8 ? 290 : 300;
+    const TX  = this.worldId === 8 ? 290 : this.worldId === 9 ? 960 : 300;
     // World 8 grass surface is 18px above GROUND_TOP — align TV bottom to that surface
     const TBY = this.worldId === 8 ? GROUND_TOP - 18 : GROUND_TOP;
     const TY  = TBY - TV_H / 2;
@@ -1775,6 +1840,548 @@ export class GameScene extends Phaser.Scene {
 
       return;
     }
+    if (this.worldId === 9) {
+      const g = this.add.graphics();
+      const CEIL = W1_CEIL;  // 100
+      const FL   = W1_FL;    // 680
+
+      // ── Ceiling across all rooms ─────────────────────────────────────────────
+      g.fillStyle(0xeebb55); g.fillRect(0, 0, W1_TOTAL_W, CEIL);
+      g.fillStyle(0xd9a840); g.fillRect(0, CEIL - 7, W1_TOTAL_W, 7);
+
+      // Dark fill for void gaps between sub-rooms (camera never sees these normally)
+      g.fillStyle(0x111111);
+      g.fillRect(1920, 0, W1_K_LEFT - 1920, LEVEL_H);
+      g.fillRect(W1_K_RIGHT, 0, W1_B_LEFT - W1_K_RIGHT, LEVEL_H);
+      g.fillRect(W1_B_RIGHT, 0, W1_BROOM_LEFT - W1_B_RIGHT, LEVEL_H);
+      g.fillRect(W1_BROOM_RIGHT, 0, W1_TOTAL_W - W1_BROOM_RIGHT, LEVEL_H);
+
+      // ═══ MAIN FLOOR (x=0..1920) ══════════════════════════════════════════════
+
+      // Left boundary wall
+      g.fillStyle(0xd9a840); g.fillRect(0, CEIL, 40, FL - CEIL);
+      // Hall wall (x=40..565) + main room (x=565..1920), same colour
+      g.fillStyle(0xf5c96a); g.fillRect(40, CEIL, 1880, FL - CEIL);
+
+      // Baseboard + red plank floor
+      g.fillStyle(0xe0b050); g.fillRect(0, FL - 16, 1920, 16);
+      for (let fx = 0; fx < 1920; fx += 48) {
+        g.fillStyle(fx % 96 === 0 ? 0xcc1100 : 0xb50e00);
+        g.fillRect(fx, FL, 46, LEVEL_H - FL);
+      }
+      g.fillStyle(0xdd1800); g.fillRect(0, FL, 1920, 5);
+
+      // ── Archway (hall ↔ main room, x=W1_MAIN_DOOR_X=565) ────────────────────
+      {
+        const CDX = W1_MAIN_DOOR_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(CDX - 5,  CEIL, 10, FL - CEIL - 92);
+        g.fillRect(CDX + 35, CEIL, 10, FL - CEIL - 92);
+        g.fillRect(CDX - 5,  CEIL, 50, 12);
+        g.fillStyle(0x7a5014); g.fillEllipse(CDX + 20, FL - 92, 50, 28);
+      }
+
+      // ── BATHROOM DOOR (x=W1_BDOOR_X=160) ─────────────────────────────────────
+      {
+        const BDX = W1_BDOOR_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(BDX - 30, FL - 98, 8, 98); g.fillRect(BDX + 22, FL - 98, 8, 98);
+        g.fillRect(BDX - 30, FL - 98, 60, 10);
+        g.fillStyle(0xc8803a); g.fillRect(BDX - 22, FL - 88, 44, 88);
+        g.fillStyle(0x9b6a2e);
+        g.fillRect(BDX - 18, FL - 84, 36, 38); g.fillRect(BDX - 18, FL - 42, 36, 34);
+        g.fillStyle(0xddaa66); g.fillCircle(BDX + 12, FL - 44, 4);
+        g.fillStyle(0x334477); g.fillRoundedRect(BDX - 28, FL - 118, 56, 16, 4);
+        g.fillStyle(0xaaccff); g.fillRect(BDX - 26, FL - 116, 52, 12);
+        this.add.text(BDX, FL - 113, "BATH", { fontSize: "9px", color: "#334477", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+      }
+
+      // ── HALL WARDROBE (wooden cabinet, x≈270) ────────────────────────────────
+      {
+        const HCBx = 257, HCBy = FL;
+        g.fillStyle(0x7a5014); g.fillRect(HCBx - 2, HCBy - 230, 74,  8);
+        g.fillStyle(0x8b5e1a); g.fillRect(HCBx,     HCBy - 222, 70, 222);
+        g.fillStyle(0x9b6a1e); g.fillRect(HCBx + 4, HCBy - 218, 62, 104);
+        g.fillStyle(0x9b6a1e); g.fillRect(HCBx + 4, HCBy - 110, 62, 106);
+        g.fillStyle(0xddaa66); g.fillRect(HCBx + 24, HCBy - 170, 16, 5);
+        g.fillStyle(0xddaa66); g.fillRect(HCBx + 24, HCBy -  62, 16, 5);
+        g.fillStyle(0x7a5014, 0.5);
+        g.fillRect(HCBx + 2,  HCBy - 222, 2, 222);
+        g.fillRect(HCBx + 68, HCBy - 222, 2, 222);
+      }
+
+      // ── KITCHEN DOOR (x=W1_KDOOR_X=430) ──────────────────────────────────────
+      {
+        const KDX = W1_KDOOR_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(KDX - 30, FL - 98, 8, 98); g.fillRect(KDX + 22, FL - 98, 8, 98);
+        g.fillRect(KDX - 30, FL - 98, 60, 10);
+        g.fillStyle(0xc8803a); g.fillRect(KDX - 22, FL - 88, 44, 88);
+        g.fillStyle(0x9b6a2e);
+        g.fillRect(KDX - 18, FL - 84, 36, 38); g.fillRect(KDX - 18, FL - 42, 36, 34);
+        g.fillStyle(0xddaa66); g.fillCircle(KDX + 12, FL - 44, 4);
+        g.fillStyle(0x336644); g.fillRoundedRect(KDX - 28, FL - 118, 56, 16, 4);
+        g.fillStyle(0xaaddcc); g.fillRect(KDX - 26, FL - 116, 52, 12);
+        this.add.text(KDX, FL - 113, "KITCHEN", { fontSize: "9px", color: "#336644", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+      }
+
+      // ── WOODEN DESK (DX=620) ─────────────────────────────────────────────────
+      {
+        const DX = 620;
+        g.fillStyle(0x8b5e1a); g.fillRect(DX, FL - 182, 100, 10);
+        g.fillStyle(0xa06820); g.fillRect(DX, FL - 174, 100,  8);
+        g.fillStyle(0x7a5014);
+        g.fillRect(DX,      FL - 174, 8, 142);
+        g.fillRect(DX + 92, FL - 174, 8, 142);
+        g.fillRect(DX,      FL -  90, 100, 8);
+        g.fillStyle(0xcc9944); g.fillRect(DX + 36, FL - 88, 22, 5);
+        g.fillStyle(0xcc3311); g.fillRect(DX +  8, FL - 194, 12, 12);
+        g.fillStyle(0x1133aa); g.fillRect(DX + 22, FL - 198, 10, 16);
+        g.fillStyle(0x228833); g.fillRect(DX + 34, FL - 196, 11, 14);
+        g.fillStyle(0xbbaa33); g.fillRect(DX + 76, FL - 200,  5, 18);
+        g.fillStyle(0xffee55); g.fillEllipse(DX + 79, FL - 200, 22, 14);
+        g.fillStyle(0xffff88, 0.35); g.fillCircle(DX + 79, FL - 186, 16);
+      }
+
+      // ── WOODEN STOOL (STX=810) ───────────────────────────────────────────────
+      {
+        const STX = 810;
+        g.fillStyle(0xa07030); g.fillEllipse(STX, FL - 74, 60, 14);
+        g.fillStyle(0xb07c35); g.fillEllipse(STX, FL - 76, 54, 10);
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(STX - 24, FL - 72,  8, 60);
+        g.fillRect(STX + 16, FL - 72,  8, 60);
+        g.fillRect(STX - 20, FL - 42, 40,  5);
+      }
+
+      // ── PURPLE EXIT DOOR (x=960, warps to exterior) ──────────────────────────
+      {
+        const PDX = 960;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(PDX - 30, FL - 96, 8, 96); g.fillRect(PDX + 22, FL - 96, 8, 96);
+        g.fillRect(PDX - 30, FL - 96, 60, 10);
+        g.fillStyle(0x8811cc); g.fillRect(PDX - 22, FL - 86, 44, 86);
+        g.fillStyle(0x6600aa); g.fillRect(PDX - 22, FL - 86, 6, 86);
+        g.fillStyle(0xaa44ee);
+        g.fillRect(PDX - 14, FL - 80, 28, 32); g.fillRect(PDX - 14, FL - 44, 28, 26);
+        g.fillStyle(0xddaa22); g.fillCircle(PDX + 10, FL - 46, 4);
+        g.fillStyle(0x7722bb); g.fillRoundedRect(PDX - 28, FL - 116, 56, 16, 4);
+        g.fillStyle(0xddaaff); g.fillRect(PDX - 26, FL - 114, 52, 12);
+        this.add.text(PDX, FL - 111, "EXIT ↑", { fontSize: "9px", color: "#7722bb", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+      }
+
+      // ── ROUND TABLE + TELEPHONE (RTX=1140) ───────────────────────────────────
+      {
+        const RTX = 1140;
+        g.fillStyle(0x7a5014);
+        g.fillRect(RTX - 7, FL - 102, 14, 70);
+        g.fillRect(RTX - 32, FL - 34, 64, 10);
+        g.fillRect(RTX - 26, FL - 26, 52,  8);
+        g.fillStyle(0x8b5e1a); g.fillEllipse(RTX, FL - 102, 90, 18);
+        g.fillStyle(0xa0722a); g.fillEllipse(RTX, FL - 104, 84, 14);
+        const PHX = RTX - 8, PHY = FL - 126;
+        g.fillStyle(0x1a1a1a); g.fillRoundedRect(PHX - 21, PHY - 28, 42, 22, 4);
+        g.fillStyle(0x2a2a2a);
+        g.fillRect(PHX - 23, PHY - 35, 10, 12); g.fillRect(PHX + 13, PHY - 35, 10, 12);
+        g.fillStyle(0x444444); g.fillRect(PHX - 9, PHY - 39, 18, 7);
+        g.fillStyle(0x333333); g.fillCircle(PHX, PHY - 16, 10);
+        g.fillStyle(0x555555); g.fillCircle(PHX, PHY - 16, 7);
+        g.fillStyle(0x111111);
+        for (let d = 0; d < 9; d++) {
+          const da = (d / 9) * Math.PI * 2 - Math.PI / 2;
+          g.fillCircle(PHX + Math.cos(da) * 5, PHY - 16 + Math.sin(da) * 5, 1.5);
+        }
+      }
+
+      // ── RED CHAIR (CHX=1290) ─────────────────────────────────────────────────
+      {
+        const CHX = 1290;
+        g.fillStyle(0x6b3a1e);
+        g.fillRect(CHX + 6, FL - 54, 10, 54); g.fillRect(CHX + 88, FL - 54, 10, 54);
+        g.fillStyle(0xcc1111); g.fillRect(CHX, FL - 72, 104, 20);
+        g.fillStyle(0x991111);
+        g.fillRect(CHX - 7,  FL - 178, 14, 108); g.fillRect(CHX + 97, FL - 178, 14, 108);
+        g.fillStyle(0xaa0f0f);
+        g.fillRect(CHX - 9,  FL - 182, 22, 10); g.fillRect(CHX + 95, FL - 182, 22, 10);
+        g.fillStyle(0xcc1111); g.fillRect(CHX + 4, FL - 268, 96, 198);
+        g.fillStyle(0xee2222); g.fillRect(CHX + 8, FL - 264, 88, 190);
+        g.fillStyle(0xaa0f0f);
+        for (let bxi = 0; bxi < 3; bxi++) for (let byi = 0; byi < 4; byi++)
+          g.fillCircle(CHX + 26 + bxi * 28, FL - 256 + byi * 52, 3);
+      }
+
+      // ── BEDROOM DOOR (x=W1_BEDROOM_X=1410, warp door to bedroom sub-room) ──────
+      {
+        const CDX = W1_BEDROOM_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(CDX - 30, FL - 98, 8, 98); g.fillRect(CDX + 22, FL - 98, 8, 98);
+        g.fillRect(CDX - 30, FL - 98, 60, 10);
+        g.fillStyle(0x8833bb); g.fillRect(CDX - 22, FL - 88, 44, 88);
+        g.fillStyle(0x6611aa); g.fillRect(CDX - 22, FL - 88, 6, 88);
+        g.fillStyle(0xaa55dd);
+        g.fillRect(CDX - 14, FL - 82, 28, 32); g.fillRect(CDX - 14, FL - 46, 28, 28);
+        g.fillStyle(0xddaa22); g.fillCircle(CDX + 12, FL - 48, 4);
+        g.fillStyle(0x551188); g.fillRoundedRect(CDX - 28, FL - 118, 56, 16, 4);
+        g.fillStyle(0xddaaff); g.fillRect(CDX - 26, FL - 116, 52, 12);
+        this.add.text(CDX, FL - 113, "BEDROOM", { fontSize: "8px", color: "#551188", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+      }
+      // Purple wall to the right of the bedroom door (up to right edge of main floor)
+      g.fillStyle(0x6633cc); g.fillRect(W1_BEDROOM_X + 40, CEIL, 1920 - W1_BEDROOM_X - 40, FL - CEIL);
+      g.fillStyle(0x5522aa); g.fillRect(W1_BEDROOM_X + 40, FL - 16, 1920 - W1_BEDROOM_X - 40, 16);
+
+      // ═══ KITCHEN SUB-ROOM (x=W1_K_LEFT..W1_K_RIGHT) ════════════════════════
+      {
+        const KLX = W1_K_LEFT, KRX = W1_K_RIGHT;
+        g.fillStyle(0xffee00); g.fillRect(KLX, CEIL, KRX - KLX, FL - CEIL);  // bright yellow walls
+        g.fillStyle(0xe0c800); g.fillRect(KLX, FL - 16, KRX - KLX, 16);
+        g.fillStyle(0xccaa00);
+        g.fillRect(KLX,      CEIL, 40, FL - CEIL);
+        g.fillRect(KRX - 40, CEIL, 40, FL - CEIL);
+        for (let fx = KLX; fx < KRX; fx += 48) {
+          g.fillStyle(fx % 96 === 0 ? 0xcc1100 : 0xb50e00);
+          g.fillRect(fx, FL, 46, LEVEL_H - FL);
+        }
+        g.fillStyle(0xdd1800); g.fillRect(KLX, FL, KRX - KLX, 5);
+
+        // Kitchen exit door
+        const KREX = W1_KRETURN_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(KREX - 30, FL - 98, 8, 98); g.fillRect(KREX + 22, FL - 98, 8, 98);
+        g.fillRect(KREX - 30, FL - 98, 60, 10);
+        g.fillStyle(0xc8803a); g.fillRect(KREX - 22, FL - 88, 44, 88);
+        g.fillStyle(0x9b6a2e);
+        g.fillRect(KREX - 18, FL - 84, 36, 38); g.fillRect(KREX - 18, FL - 42, 36, 34);
+        g.fillStyle(0xddaa66); g.fillCircle(KREX + 12, FL - 44, 4);
+        g.fillStyle(0x443322); g.fillRoundedRect(KREX - 28, FL - 118, 56, 16, 4);
+        g.fillStyle(0xddccaa); g.fillRect(KREX - 26, FL - 116, 52, 12);
+        this.add.text(KREX, FL - 113, "EXIT", { fontSize: "9px", color: "#443322", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+
+        // Upper cabinet
+        const CBX = KLX + 55, CBY = CEIL + 28;
+        g.fillStyle(0xc8803a); g.fillRect(CBX, CBY, 165, 134);
+        g.fillStyle(0xa86220); g.fillRect(CBX - 2, CBY + 134, 169, 7);
+        g.fillStyle(0xb87230); g.fillRect(CBX + 4, CBY + 4, 157, 60);
+        g.fillStyle(0xb87230); g.fillRect(CBX + 4, CBY + 68, 157, 62);
+        g.fillStyle(0xddaa66); g.fillRect(CBX + 66, CBY + 28, 22, 5);
+        g.fillStyle(0xddaa66); g.fillRect(CBX + 66, CBY + 92, 22, 5);
+
+        // Yellow-curtain window
+        const KWX = KLX + 260, KWY = 138, KWW = 88, KWH = 230;
+        g.fillStyle(0xbbddff); g.fillRect(KWX, KWY, KWW, KWH);
+        g.fillStyle(0x88ccff); g.fillRect(KWX + 2, KWY + 2, KWW - 4, KWH / 2 | 0);
+        g.fillStyle(0x44aa22); g.fillRect(KWX + 2, KWY + KWH / 2, KWW - 4, KWH / 2 - 2);
+        g.fillStyle(0xeecc00); g.fillRect(KWX, KWY, 20, KWH);
+        g.fillStyle(0xeecc00); g.fillRect(KWX + KWW - 20, KWY, 20, KWH);
+        g.fillStyle(0xffdd22); g.fillRect(KWX + 2, KWY, 6, KWH);
+        g.fillStyle(0xffdd22); g.fillRect(KWX + KWW - 9, KWY, 6, KWH);
+        g.fillStyle(0xaa8800); g.fillCircle(KWX + 20, KWY + (KWH * 0.6) | 0, 7);
+        g.fillStyle(0xaa8800); g.fillCircle(KWX + KWW - 20, KWY + (KWH * 0.6) | 0, 7);
+        g.fillStyle(0xffffff);
+        g.fillRect(KWX - 5, KWY - 5, KWW + 10, 6);
+        g.fillRect(KWX - 5, KWY + KWH, KWW + 10, 6);
+        g.fillRect(KWX - 5, KWY - 5, 6, KWH + 10);
+        g.fillRect(KWX + KWW - 1, KWY - 5, 6, KWH + 10);
+        g.fillRect(KWX + (KWW / 2 | 0) - 2, KWY, 4, KWH);
+        g.fillStyle(0xeeeeee); g.fillRect(KWX - 8, KWY + KWH + 4, KWW + 16, 8);
+
+        // Counter — lowered to 120px so any character can reach it
+        const CTX = KLX + 460, CTY = FL;
+        g.fillStyle(0xc8803a); g.fillRect(CTX, CTY - 120, 154, 120);
+        g.fillStyle(0xe8e4d8); g.fillRect(CTX - 4, CTY - 126, 162, 14);    // countertop
+        g.fillStyle(0xb87230); g.fillRect(CTX +  4, CTY - 112, 68, 112);
+        g.fillStyle(0xb87230); g.fillRect(CTX + 78, CTY - 112, 68, 112);
+        g.fillStyle(0xddaa66); g.fillRect(CTX + 26, CTY - 66, 14, 4);
+        g.fillStyle(0xddaa66); g.fillRect(CTX + 98, CTY - 66, 14, 4);
+        g.fillStyle(0xd0ccc0); g.fillRect(CTX + 10, CTY - 122, 64, 8);     // sink
+        g.fillStyle(0x888888); g.fillCircle(CTX + 40, CTY - 116, 4);
+        // Tomatoes (sitting on countertop at CTY-126)
+        g.fillStyle(0xdd2211); g.fillCircle(CTX + 18, CTY - 136, 10);
+        g.fillStyle(0xee3322); g.fillCircle(CTX + 16, CTY - 137, 6);
+        g.fillStyle(0x44aa22); g.fillRect(CTX + 16, CTY - 148, 4, 9);
+        g.fillStyle(0xdd2211); g.fillCircle(CTX + 42, CTY - 135, 9);
+        g.fillStyle(0x44aa22); g.fillRect(CTX + 40, CTY - 146, 4, 8);
+        // Carrots
+        g.fillStyle(0xff8811);
+        g.fillTriangle(CTX + 70, CTY - 126, CTX + 76, CTY - 126, CTX + 73, CTY - 152);
+        g.fillStyle(0x44aa22); g.fillRect(CTX + 71, CTY - 156, 3, 8);
+        g.fillStyle(0xff8811);
+        g.fillTriangle(CTX + 82, CTY - 126, CTX + 88, CTY - 126, CTX + 85, CTY - 148);
+        g.fillStyle(0x44aa22); g.fillRect(CTX + 83, CTY - 152, 3, 7);
+        // Cucumber
+        g.fillStyle(0x228822); g.fillRect(CTX + 104, CTY - 148, 30, 14);
+        g.fillStyle(0x33aa33); g.fillRect(CTX + 106, CTY - 146, 24, 8);
+        g.fillStyle(0x55cc44); g.fillRect(CTX + 108, CTY - 142, 10, 3);
+        g.fillStyle(0x44aa22);
+        g.fillCircle(CTX + 116, CTY - 150, 5); g.fillCircle(CTX + 126, CTY - 150, 4);
+
+        // Fridge
+        const FX = KLX + 870, FY = FL;
+        g.fillStyle(0xdde0ee); g.fillRect(FX, FY - 280, 76, 280);
+        g.fillStyle(0xcccfdd); g.fillRect(FX + 2, FY - 278, 72, 106);
+        g.fillStyle(0xd5d8eb); g.fillRect(FX + 2, FY - 170, 72, 168);
+        g.fillStyle(0x888899); g.fillRect(FX + 62, FY - 246, 8, 36);
+        g.fillStyle(0x888899); g.fillRect(FX + 62, FY - 150, 8, 36);
+        g.fillStyle(0x9999aa); g.fillRect(FX, FY - 172, 76, 3);
+        g.fillStyle(0x44ff44); g.fillCircle(FX + 10, FY - 262, 3);
+        g.fillStyle(0xccccdd); g.fillRect(FX, FY - 280, 76, 6);
+
+        // Luigi The Meat Mallet (x = KLX+650)
+        {
+          const LX = KLX + 650, LY = FL;
+          g.fillStyle(0x8b5e1a); g.fillRect(LX - 3, LY - 105, 6, 100);
+          g.fillStyle(0xa06820); g.fillRect(LX - 1, LY - 105, 2, 100);
+          g.fillStyle(0x888888); g.fillRect(LX - 16, LY - 133, 32, 28);
+          g.fillStyle(0x666666);
+          for (let sx = 0; sx < 5; sx++) for (let sy = 0; sy < 4; sy++)
+            g.fillRect(LX - 14 + sx * 6, LY - 131 + sy * 6, 4, 4);
+          g.fillStyle(0xaaaaaa); g.fillRect(LX - 16, LY - 133, 32, 3);
+          g.fillStyle(0x777777); g.fillRect(LX - 16, LY - 107, 32, 3);
+          g.fillStyle(0xffcc88); g.fillRect(LX - 12, LY - 157, 24, 22);
+          g.fillStyle(0xffaa66); g.fillEllipse(LX + 2, LY - 146, 10, 8);
+          g.fillStyle(0xffffff); g.fillCircle(LX - 5, LY - 153, 4);
+          g.fillStyle(0xffffff); g.fillCircle(LX + 7, LY - 153, 4);
+          g.fillStyle(0x4488ff); g.fillCircle(LX - 5, LY - 153, 2.5);
+          g.fillStyle(0x4488ff); g.fillCircle(LX + 7, LY - 153, 2.5);
+          g.fillStyle(0x000000); g.fillCircle(LX - 5, LY - 153, 1.5);
+          g.fillStyle(0x000000); g.fillCircle(LX + 7, LY - 153, 1.5);
+          g.fillStyle(0x111111);
+          g.fillEllipse(LX - 5, LY - 139, 12, 7);
+          g.fillEllipse(LX + 7, LY - 139, 12, 7);
+          g.fillStyle(0x5a3010);
+          g.fillRect(LX - 12, LY - 139, 4, 2); g.fillRect(LX + 8, LY - 139, 4, 2);
+          g.fillStyle(0x228822); g.fillRect(LX - 14, LY - 175, 28, 18);
+          g.fillStyle(0x116611); g.fillRect(LX - 14, LY - 175, 28, 4);
+          g.fillStyle(0x228822); g.fillRect(LX - 16, LY - 159, 32, 4);
+          g.fillStyle(0xffffff);
+          g.fillRect(LX - 4, LY - 171, 3, 10);
+          g.fillRect(LX - 4, LY - 162, 7, 3);
+        }
+      }
+
+      // ═══ BATHROOM SUB-ROOM (x=W1_B_LEFT..W1_B_RIGHT) ════════════════════════
+      {
+        const BLX = W1_B_LEFT, BRX = W1_B_RIGHT;
+        for (let sx = BLX; sx < BRX; sx += 64) {
+          g.fillStyle(0xffffff);  g.fillRect(sx,      CEIL, 32, FL - CEIL);
+          g.fillStyle(0xffcce0);  g.fillRect(sx + 32, CEIL, 32, FL - CEIL);
+        }
+        g.fillStyle(0xddaabb); g.fillRect(BLX, FL - 10, BRX - BLX, 10);
+        // Right bounding wall only (no left visual wall — door starts right at the edge)
+        g.fillStyle(0xeeccdd); g.fillRect(BRX - 40, CEIL, 40, FL - CEIL);
+        const CS = 32;
+        for (let cx = BLX; cx < BRX; cx += CS)
+          for (let cy = FL; cy < LEVEL_H; cy += CS) {
+            g.fillStyle(((cx - BLX) / CS + (cy - FL) / CS) % 2 === 0 ? 0xffffff : 0xeeb8cc);
+            g.fillRect(cx, cy, CS, CS);
+          }
+
+        // Bathroom exit door flush against left wall (W1_BRETURN_X=3525)
+        const BREX = W1_BRETURN_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(BREX - 30, FL - 98, 8, 98); g.fillRect(BREX + 22, FL - 98, 8, 98);
+        g.fillRect(BREX - 30, FL - 98, 60, 10);
+        g.fillStyle(0xfcfcfc); g.fillRect(BREX - 22, FL - 88, 44, 88);
+        g.fillStyle(0xeeeeee);
+        g.fillRect(BREX - 18, FL - 84, 36, 38); g.fillRect(BREX - 18, FL - 42, 36, 34);
+        g.fillStyle(0xddaa66); g.fillCircle(BREX + 12, FL - 44, 4);
+        g.fillStyle(0x443322); g.fillRoundedRect(BREX - 28, FL - 118, 56, 16, 4);
+        g.fillStyle(0xddccaa); g.fillRect(BREX - 26, FL - 116, 52, 12);
+        this.add.text(BREX, FL - 113, "EXIT", { fontSize: "9px", color: "#443322", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+
+        // Toilet right next to exit door
+        const TOX = BREX + 38, TOY = FL;
+        g.fillStyle(0xf2f2f2); g.fillRect(TOX, TOY - 192, 52, 92);
+        g.fillStyle(0xe5e5e5); g.fillRect(TOX + 2, TOY - 190, 48, 88);
+        g.fillStyle(0xfafafa); g.fillRect(TOX - 3, TOY - 196, 58, 10);
+        g.fillStyle(0xcccccc); g.fillCircle(TOX + 34, TOY - 190, 5);
+        g.fillStyle(0xdddddd); g.fillCircle(TOX + 33, TOY - 191, 3);
+        g.fillStyle(0xdadada); g.fillRect(TOX + 8, TOY - 100, 34, 6);
+        g.fillStyle(0xefefef); g.fillEllipse(TOX + 28, TOY - 80, 74, 98);
+        g.fillStyle(0xe2e2e2); g.fillEllipse(TOX + 28, TOY - 74, 60, 78);
+        g.fillStyle(0xccddff, 0.6); g.fillEllipse(TOX + 28, TOY - 66, 48, 58);
+        g.fillStyle(0xf5f5f5); g.fillEllipse(TOX + 28, TOY - 96, 74, 22);
+        g.fillStyle(0xfefefe); g.fillEllipse(TOX + 28, TOY - 98, 66, 16);
+        g.fillStyle(0xeaeaea); g.fillRect(TOX + 8, TOY - 30, 40, 30);
+
+        // Pink bathtub
+        const BTX = BREX + 140, BTWW = 148, BTH = 108, BTOY = FL;
+        g.fillStyle(0xffaabb); g.fillRect(BTX, BTOY - BTH, BTWW, BTH);
+        g.fillStyle(0xffbbcc); g.fillRect(BTX + 5, BTOY - BTH + 5, BTWW - 10, BTH - 10);
+        g.fillStyle(0xaaddff, 0.7); g.fillRect(BTX + 8, BTOY - BTH + 14, BTWW - 16, BTH - 28);
+        g.fillStyle(0xbbeeff, 0.5); g.fillRect(BTX + 12, BTOY - BTH + 17, 54, 9);
+        g.fillStyle(0xffccdd); g.fillRect(BTX - 4, BTOY - BTH - 6, BTWW + 8, 10);
+        g.fillStyle(0xbbbbbb); g.fillRect(BTX + 4, BTOY - BTH - 18, 12, 16);
+        g.fillStyle(0xaaaaaa); g.fillRect(BTX, BTOY - BTH - 22, 20, 7);
+        g.fillStyle(0x888888); g.fillCircle(BTX + BTWW / 2, BTOY - 14, 7);
+        g.fillStyle(0x555555); g.fillCircle(BTX + BTWW / 2, BTOY - 14, 4);
+        g.fillStyle(0xdd99aa);
+        g.fillEllipse(BTX + 12, BTOY, 14, 8); g.fillEllipse(BTX + BTWW - 12, BTOY, 14, 8);
+
+        // Towel rack
+        const TRX = BREX + 360, TRY = FL;
+        g.fillStyle(0xaaaaaa); g.fillRect(TRX - 3, TRY - 212, 6, 182);
+        g.fillStyle(0x999999);
+        g.fillRect(TRX - 32, TRY - 190, 64, 7);
+        g.fillRect(TRX - 32, TRY - 150, 64, 7);
+        g.fillRect(TRX - 32, TRY - 110, 64, 7);
+        g.fillStyle(0xff6688); g.fillRect(TRX - 28, TRY - 188, 56, 34);
+        g.fillStyle(0xff88aa); g.fillRect(TRX - 24, TRY - 186, 42, 26);
+        g.fillStyle(0x6688ff); g.fillRect(TRX - 28, TRY - 148, 56, 34);
+        g.fillStyle(0x88aaff); g.fillRect(TRX - 24, TRY - 146, 42, 26);
+        g.fillStyle(0xffcc44); g.fillRect(TRX - 28, TRY - 108, 56, 34);
+        g.fillStyle(0xffdd66); g.fillRect(TRX - 24, TRY - 106, 42, 26);
+
+        // Boopkins (Fishy Boopkins, jellyfish creature)
+        {
+          const BKX = BREX + 540, BKY = FL;
+          g.fillStyle(0x2288dd); g.fillCircle(BKX, BKY - 40, 24);
+          g.fillStyle(0x44aaff); g.fillCircle(BKX - 4, BKY - 44, 18);
+          g.fillStyle(0xffffff); g.fillCircle(BKX - 9, BKY - 44, 9);
+          g.fillStyle(0xffffff); g.fillCircle(BKX + 9, BKY - 44, 9);
+          g.fillStyle(0x2255cc); g.fillCircle(BKX - 8, BKY - 44, 6);
+          g.fillStyle(0x2255cc); g.fillCircle(BKX + 8, BKY - 44, 6);
+          g.fillStyle(0x000000); g.fillCircle(BKX - 7, BKY - 43, 4);
+          g.fillStyle(0x000000); g.fillCircle(BKX + 9, BKY - 43, 4);
+          g.fillStyle(0xffffff); g.fillCircle(BKX - 6, BKY - 45, 1.5);
+          g.fillStyle(0xffffff); g.fillCircle(BKX + 10, BKY - 45, 1.5);
+          g.fillStyle(0x1a6699); g.fillRect(BKX - 4, BKY - 34, 8, 3);
+          g.fillStyle(0x1a77bb);
+          for (let t = 0; t < 5; t++) {
+            const tx = BKX - 16 + t * 8;
+            const th = 10 + (t === 2 ? 4 : 0);
+            g.fillRect(tx, BKY - 20, 4, th);
+            g.fillCircle(tx + 2, BKY - 20 + th + 2, 3);
+          }
+        }
+      }
+
+      // ═══ BEDROOM SUB-ROOM (x=W1_BROOM_LEFT..W1_BROOM_RIGHT) ═════════════════
+      {
+        const BRX = W1_BROOM_LEFT, BRRX = W1_BROOM_RIGHT;
+        // Purple walls
+        g.fillStyle(0x6633cc); g.fillRect(BRX, CEIL, BRRX - BRX, FL - CEIL);
+        g.fillStyle(0x5522aa); g.fillRect(BRX, FL - 16, BRRX - BRX, 16);
+        // Bounding walls (dark purple)
+        g.fillStyle(0x3311aa);
+        g.fillRect(BRX,        CEIL, 40, FL - CEIL);
+        g.fillRect(BRRX - 40,  CEIL, 40, FL - CEIL);
+        // Red plank floor
+        for (let fx = BRX; fx < BRRX; fx += 48) {
+          g.fillStyle(fx % 96 === 0 ? 0xcc1100 : 0xb50e00);
+          g.fillRect(fx, FL, 46, LEVEL_H - FL);
+        }
+        g.fillStyle(0xdd1800); g.fillRect(BRX, FL, BRRX - BRX, 5);
+
+        // Bedroom exit door (left side)
+        const BREX = W1_BROOM_RETURN_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(BREX - 30, FL - 98, 8, 98); g.fillRect(BREX + 22, FL - 98, 8, 98);
+        g.fillRect(BREX - 30, FL - 98, 60, 10);
+        g.fillStyle(0x8833bb); g.fillRect(BREX - 22, FL - 88, 44, 88);
+        g.fillStyle(0x6611aa); g.fillRect(BREX - 22, FL - 88, 6, 88);
+        g.fillStyle(0xaa55dd);
+        g.fillRect(BREX - 14, FL - 82, 28, 32); g.fillRect(BREX - 14, FL - 46, 28, 28);
+        g.fillStyle(0xddaa22); g.fillCircle(BREX + 12, FL - 48, 4);
+        g.fillStyle(0x551188); g.fillRoundedRect(BREX - 28, FL - 118, 56, 16, 4);
+        g.fillStyle(0xddaaff); g.fillRect(BREX - 26, FL - 116, 52, 12);
+        this.add.text(BREX, FL - 113, "EXIT", { fontSize: "9px", color: "#551188", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+
+        // ── WAR SCENE PAINTING (left wall) ───────────────────────────────────
+        {
+          const WPX = BRX + 80, WPY = FL - 380;
+          g.fillStyle(0x3a1a0a); g.fillRect(WPX, WPY, 80, 100);
+          g.fillStyle(0x1a1a2e); g.fillRect(WPX + 5, WPY + 5, 70, 90);
+          g.fillStyle(0x4a3820); g.fillRect(WPX + 5, WPY + 76, 70, 19);
+          g.fillStyle(0x111111);
+          g.fillRect(WPX + 12, WPY + 64, 4, 12); g.fillCircle(WPX + 14, WPY + 61, 3.5);
+          g.fillRect(WPX + 14, WPY + 67, 14, 2);
+          g.fillRect(WPX + 32, WPY + 62, 4, 14); g.fillCircle(WPX + 34, WPY + 59, 3.5);
+          g.fillRect(WPX + 34, WPY + 65, 12, 2);
+          g.fillRect(WPX + 50, WPY + 64, 4, 12); g.fillCircle(WPX + 52, WPY + 61, 3.5);
+          g.fillRect(WPX + 50, WPY + 66, 11, 2);
+          g.fillStyle(0x2a2a2a); g.fillRect(WPX + 56, WPY + 70, 16, 8);
+          g.fillStyle(0xff6600, 0.8); g.fillCircle(WPX + 62, WPY + 20, 14);
+          g.fillStyle(0xffaa22, 0.6); g.fillCircle(WPX + 66, WPY + 14, 9);
+          g.fillStyle(0xffff00, 0.5); g.fillCircle(WPX + 60, WPY + 18, 5);
+          g.fillStyle(0xffffff, 0.7);
+          const bstars: [number,number][] = [[14,10],[32,8],[52,14],[22,18],[45,11]];
+          for (const [sx,sy] of bstars) g.fillCircle(WPX + sx, WPY + sy, 1.5);
+          g.fillStyle(0x9b6a2a);
+          g.fillCircle(WPX, WPY, 4); g.fillCircle(WPX + 80, WPY, 4);
+          g.fillCircle(WPX, WPY + 100, 4); g.fillCircle(WPX + 80, WPY + 100, 4);
+        }
+
+        // ── PURPLE WALL CURTAIN DRAPE ─────────────────────────────────────────
+        {
+          const PCX = BRX + 200;
+          g.fillStyle(0xaa8820); g.fillRect(PCX - 4, CEIL, 54, 5);
+          g.fillStyle(0x8811cc); g.fillRect(PCX, CEIL + 4, 46, FL - CEIL - 4);
+          g.fillStyle(0x6600aa); g.fillRect(PCX, CEIL + 4, 8, FL - CEIL - 4);
+          g.fillStyle(0xbb55ff); g.fillRect(PCX + 14, CEIL + 4, 8, FL - CEIL - 4);
+          g.fillStyle(0xbb55ff); g.fillRect(PCX + 30, CEIL + 4, 8, FL - CEIL - 4);
+          g.fillStyle(0xffdd44); g.fillCircle(PCX + 23, FL - 250, 8);
+        }
+
+        // ── VIOLET TABLE ──────────────────────────────────────────────────────
+        {
+          const VTX = BRX + 252, VTY = FL;
+          g.fillStyle(0x5500aa); g.fillRect(VTX, VTY - 72, 54, 8);
+          g.fillStyle(0x4400aa); g.fillRect(VTX + 2, VTY - 70, 50, 6);
+          g.fillStyle(0x440088);
+          g.fillRect(VTX + 4,  VTY - 62, 8, 62);
+          g.fillRect(VTX + 42, VTY - 62, 8, 62);
+          g.fillRect(VTX + 4,  VTY - 38, 46, 5);
+          g.fillStyle(0xcc77ff); g.fillEllipse(VTX + 27, VTY - 86, 20, 14);
+          g.fillStyle(0x9933cc); g.fillRect(VTX + 21, VTY - 80, 12, 8);
+          g.fillStyle(0xff77aa); g.fillCircle(VTX + 27, VTY - 91, 6);
+          g.fillStyle(0xffaacc); g.fillCircle(VTX + 25, VTY - 93, 3);
+        }
+
+        // ── PURPLE BED ────────────────────────────────────────────────────────
+        {
+          const PBDX = BRX + 330, PBDY = FL;
+          g.fillStyle(0x330066);
+          g.fillRect(PBDX + 2, PBDY - 8, 8, 8); g.fillRect(PBDX + 110, PBDY - 8, 8, 8);
+          g.fillStyle(0x440077); g.fillRect(PBDX, PBDY - 60, 120, 52);
+          g.fillStyle(0x6611aa); g.fillRect(PBDX + 2, PBDY - 58, 116, 44);
+          g.fillStyle(0x550088); g.fillRect(PBDX, PBDY - 118, 120, 60);
+          g.fillStyle(0x7722aa); g.fillRect(PBDX + 4, PBDY - 114, 112, 52);
+          g.fillStyle(0x8833bb);
+          g.fillRect(PBDX + 8,  PBDY - 110, 46, 42);
+          g.fillRect(PBDX + 62, PBDY - 110, 46, 42);
+          g.fillStyle(0xddbbff); g.fillRoundedRect(PBDX + 6,  PBDY - 54, 52, 22, 6);
+          g.fillStyle(0xeeccff); g.fillRoundedRect(PBDX + 8,  PBDY - 52, 46, 16, 4);
+          g.fillStyle(0x9933cc); g.fillRect(PBDX + 4, PBDY - 38, 112, 30);
+          g.fillStyle(0xaa44dd); g.fillRect(PBDX + 4, PBDY - 38, 112, 4);
+          g.fillStyle(0x440077);
+          g.fillRect(PBDX, PBDY - 60, 6, 60); g.fillRect(PBDX + 114, PBDY - 60, 6, 60);
+        }
+
+        // ── WINDOW WITH RED CURTAINS (right side) ─────────────────────────────
+        {
+          const WX = BRX + 480, WY = 140, WW = 86, WH = 240;
+          g.fillStyle(0xbbddff); g.fillRect(WX, WY, WW, WH);
+          g.fillStyle(0x88ccff); g.fillRect(WX + 2, WY + 2, WW - 4, WH / 2 | 0);
+          g.fillStyle(0x44aa22); g.fillRect(WX + 2, WY + WH / 2, WW - 4, WH / 2 - 2);
+          g.fillStyle(0xcc1122); g.fillRect(WX,           WY, 20, WH);
+          g.fillStyle(0xcc1122); g.fillRect(WX + WW - 20, WY, 20, WH);
+          g.fillStyle(0xee3344); g.fillRect(WX + 2,       WY, 7, WH);
+          g.fillStyle(0xee3344); g.fillRect(WX + WW - 10, WY, 7, WH);
+          g.fillStyle(0xffcc44); g.fillCircle(WX + 20,      WY + (WH * 0.62) | 0, 7);
+          g.fillStyle(0xffcc44); g.fillCircle(WX + WW - 20, WY + (WH * 0.62) | 0, 7);
+          g.fillStyle(0xffffff);
+          g.fillRect(WX - 5, WY - 5, WW + 10, 6);
+          g.fillRect(WX - 5, WY + WH, WW + 10, 6);
+          g.fillRect(WX - 5, WY - 5, 6, WH + 10);
+          g.fillRect(WX + WW - 1, WY - 5, 6, WH + 10);
+          g.fillRect(WX + (WW / 2 | 0) - 2, WY, 4, WH);
+          g.fillStyle(0xeeeeee); g.fillRect(WX - 8, WY + WH + 4, WW + 16, 8);
+        }
+      }
+
+      return;
+    }
+
     const skyColors = [0x1a0a3a, 0x5c94fc, 0x0a2a0a, 0x3a1a00, 0x0a1a3a, 0x2a0a2a, 0x3a0a0a];
     const bg = this.add.graphics();
     bg.fillStyle(skyColors[(this.worldId - 1) % skyColors.length]);
@@ -1803,6 +2410,63 @@ export class GameScene extends Phaser.Scene {
       // ── Return TV (Puzzlevision, right of house) ────────────────────────
       this.buildReturnTV();
       return; // no text overlay
+    }
+
+    if (this.worldId === 9) {
+      // Hide main-floor brick tiles (visual floor drawn in background)
+      this.platforms.getChildren().forEach(p =>
+        (p as Phaser.Physics.Arcade.Sprite).setAlpha(0));
+
+      // Sub-room floors
+      for (let kx = W1_K_LEFT; kx < W1_K_RIGHT; kx += 64)
+        (this.platforms.create(kx + 32, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0);
+      for (let bx = W1_B_LEFT; bx < W1_B_RIGHT; bx += 64)
+        (this.platforms.create(bx + 32, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0);
+
+      // Invisible wall barriers at every room boundary (full-height, 24px wide)
+      const wall = (x: number) => {
+        const w = this.platforms.create(x, LEVEL_H / 2, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+        w.setAlpha(0).setDisplaySize(24, LEVEL_H).refreshBody();
+      };
+      wall(1920);           // right edge of main floor
+      wall(W1_K_LEFT);           // left edge of kitchen
+      wall(W1_K_RIGHT);          // right edge of kitchen
+      wall(W1_B_LEFT);           // left edge of bathroom
+      wall(W1_B_RIGHT);          // right edge of bathroom
+      wall(W1_BROOM_LEFT);       // left edge of bedroom sub-room
+      wall(W1_BROOM_RIGHT);      // right edge of bedroom sub-room
+
+      // Bedroom sub-room floor tiles
+      for (let rx = W1_BROOM_LEFT; rx < W1_BROOM_RIGHT; rx += 64)
+        (this.platforms.create(rx + 32, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0);
+
+      // Furniture platforms (invisible)
+      const plat = (cx: number, cy: number, w: number, h = 8) => {
+        const p = this.platforms.create(cx, cy, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+        p.setAlpha(0).setDisplaySize(w, h).refreshBody();
+      };
+      // Main room
+      plat(670,              W1_FL - 178, 100);  // desk top
+      plat(810,              W1_FL -  77,  58);  // stool seat
+      plat(1140,             W1_FL - 107,  88);  // round table top
+      plat(1342,             W1_FL -  68, 104);  // chair seat
+      // Wardrobe top in hall
+      plat(292,              W1_FL - 222,  70);  // wardrobe crown
+      // Kitchen
+      plat(W1_K_LEFT + 537, W1_FL - 122, 162);  // countertop (lowered)
+      plat(W1_K_LEFT + 908, W1_FL - 276,  76);  // fridge top
+      // Bedroom sub-room furniture
+      plat(W1_BROOM_LEFT + 279, W1_FL -  64,  54);   // violet table top (VTX+27, VTY-72 surface)
+      plat(W1_BROOM_LEFT + 390, W1_FL -  52, 116);   // purple bed surface (PBDX+60, PBDY-60)
+
+      // Purple exit door warp zone at x=960
+      this.returnTVGroup = this.physics.add.staticGroup();
+      const dz = this.returnTVGroup.create(960, W1_FL - 43, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+      dz.setAlpha(0).setDisplaySize(44, 86).refreshBody();
+      dz.setData("hw", 22);
+      dz.setData("hh", 43);
+
+      return;
     }
 
     const namedShows: Record<number, { title: string; color: string; stroke: string }> = {
@@ -1846,6 +2510,7 @@ export class GameScene extends Phaser.Scene {
         character: this.character,
         worldId,
         ...(worldId === 0 && { fromWorld: this.worldId }),
+        ...((worldId === 8 && this.worldId === 9) && { fromWorld: 9 }),
       });
     });
   }
@@ -1862,7 +2527,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupCamera() {
-    this.cameras.main.setBounds(0, 0, LEVEL_W, LEVEL_H);
+    const camW = this.worldId === 9 ? 1920 : LEVEL_W;
+    this.cameras.main.setBounds(0, 0, camW, LEVEL_H);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
   }
 
