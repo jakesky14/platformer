@@ -234,6 +234,8 @@ export class GameScene extends Phaser.Scene {
   private lastBarrageActive:  boolean | null = null;
   private barrageFlashEvent:  Phaser.Time.TimerEvent | null = null;
   private pipeInspected       = false;
+  private mysteriesComplete   = false;
+  private onceUponObjs: Phaser.GameObjects.GameObject[] = [];
   // Mr. Puzzles + inventory + pipe
   private carrotsSmashed    = false;
   private cucumbersSmashed  = false;
@@ -244,7 +246,7 @@ export class GameScene extends Phaser.Scene {
   private pipeBombUsed     = false;
   private inventoryOpen    = false;
   private inventoryObjs:   Phaser.GameObjects.GameObject[] = [];
-  private mrPuzzlesGfx:    Phaser.GameObjects.Graphics | null = null;
+  private mrPuzzlesGfx:    (Phaser.GameObjects.Graphics | Phaser.GameObjects.Image) | null = null;
   private pipeRevealGfx:   Phaser.GameObjects.Graphics | null = null;
   private pipeZLabel:      Phaser.GameObjects.Text     | null = null;
   private keyX!:           Phaser.Input.Keyboard.Key;
@@ -278,6 +280,7 @@ export class GameScene extends Phaser.Scene {
     this.worldId   = data?.worldId   ?? 0;
     this.fromWorld = data?.fromWorld ?? -1;
     this.stats     = CHAR_STATS[this.character] ?? CHAR_STATS.mario;
+    if (this.fromWorld === 9) this.mysteriesComplete = true;
     this.maxHp           = this.assistModeActive ? 6 : 3;
     this.dying           = false;
     this.kickImmuneUntil = 0;
@@ -366,6 +369,7 @@ export class GameScene extends Phaser.Scene {
     this.barrageWarningText  = null;
     this.lastBarrageActive   = null;
     this.barrageFlashEvent   = null;
+    this.onceUponObjs        = [];
     this.boopkinsKeyGiven    = false;
     this.endingTriggered     = false;
     this.guessingActive      = false;
@@ -424,7 +428,7 @@ export class GameScene extends Phaser.Scene {
   private generateTextures() {
     ["player", "ground-tile", "seat-tile", "tv-blank", "flag", "cloud", "goomba", "koopa", "shell",
      "pipe-body", "pipe-cap", "brick-block", "question-block", "mushroom-item", "puzzlevision",
-     "marios-mysteries-cropped"].forEach(k => {
+     "marios-mysteries-cropped", "mrpuzzles-sprite", "once-upon-smg4"].forEach(k => {
       if (this.textures.exists(k)) this.textures.remove(k);
     });
     for (let f = 0; f < TV_STATIC_FRAMES; f++) {
@@ -1182,6 +1186,74 @@ export class GameScene extends Phaser.Scene {
       ctx.fillText("ORIGINAL", cx, bty + 46);
     }));
 
+    // ── Mr. Puzzles sprite texture (always available, identical to playable) ───
+    this.textures.addCanvas("mrpuzzles-sprite", this.makeCanvas(36, 42, ctx => {
+      ctx.fillStyle = "#666666"; ctx.fillRect(17, 0, 2, 6);
+      ctx.fillStyle = "#ffdd00"; ctx.beginPath(); ctx.arc(18, 0, 2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#888888"; ctx.fillRect(5, 4, 26, 16);
+      ctx.fillStyle = "#222222"; ctx.fillRect(7, 6, 22, 12);
+      ctx.fillStyle = "#aabbcc";
+      ctx.beginPath(); ctx.arc(13, 9, 2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(23, 9, 2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#000"; ctx.fillRect(12, 9, 2, 2); ctx.fillRect(22, 9, 2, 2);
+      ctx.fillStyle = "#ff4444"; ctx.fillRect(7,  13, 6, 5);
+      ctx.fillStyle = "#44dd44"; ctx.fillRect(13, 13, 5, 5);
+      ctx.fillStyle = "#ffdd00"; ctx.fillRect(18, 13, 5, 5);
+      ctx.fillStyle = "#4488ff"; ctx.fillRect(23, 13, 6, 5);
+      ctx.fillStyle = "#111111"; ctx.fillRect(5, 20, 26, 16);
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(13, 20, 10, 8);
+      ctx.fillStyle = "#111";
+      ctx.beginPath(); ctx.moveTo(14,20); ctx.lineTo(18,23); ctx.lineTo(14,26); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(22,20); ctx.lineTo(18,23); ctx.lineTo(22,26); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#111"; ctx.fillRect(0, 21, 6, 3); ctx.fillRect(30, 21, 6, 3);
+      ctx.fillStyle = "#333"; ctx.fillRect(0, 18, 5, 8); ctx.fillRect(31, 18, 5, 8);
+      ctx.fillStyle = "#111111"; ctx.fillRect(9, 36, 18, 6);
+      ctx.fillStyle = "#000"; ctx.fillRect(8, 39, 9, 3); ctx.fillRect(19, 39, 9, 3);
+    }));
+
+    // ── Once Upon an SMG4 TV thumbnail ──────────────────────────────────────
+    this.textures.addCanvas("once-upon-smg4", this.makeCanvas(TV_SW, TV_SH, ctx => {
+      // Night sky
+      ctx.fillStyle = "#06021a"; ctx.fillRect(0, 0, TV_SW, TV_SH);
+      // Stars
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      [[20,5],[38,9],[60,4],[82,7],[100,11],[118,5],[28,14],[50,3],[73,14],[110,3]].forEach(([sx,sy]) => {
+        ctx.fillRect(sx, sy, 1, 1);
+      });
+      // Crescent moon (top-right)
+      ctx.fillStyle = "rgba(220,215,180,0.85)";
+      ctx.beginPath(); ctx.arc(118, 13, 10, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#06021a";
+      ctx.beginPath(); ctx.arc(121, 11, 8, 0, Math.PI*2); ctx.fill();
+      // Forest silhouettes – left trees
+      ctx.fillStyle = "#050f02";
+      ctx.beginPath(); ctx.moveTo(0,86); ctx.lineTo(0,46); ctx.lineTo(14,22); ctx.lineTo(28,46); ctx.lineTo(28,86); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(15,86); ctx.lineTo(15,56); ctx.lineTo(26,36); ctx.lineTo(37,56); ctx.lineTo(37,86); ctx.closePath(); ctx.fill();
+      // Forest silhouettes – right trees
+      ctx.beginPath(); ctx.moveTo(136,86); ctx.lineTo(136,44); ctx.lineTo(122,20); ctx.lineTo(108,44); ctx.lineTo(108,86); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(120,86); ctx.lineTo(120,52); ctx.lineTo(107,30); ctx.lineTo(94,52); ctx.lineTo(94,86); ctx.closePath(); ctx.fill();
+      // Ground
+      ctx.fillStyle = "#040a02"; ctx.fillRect(0, 66, TV_SW, 20);
+      // Glow behind title
+      ctx.fillStyle = "rgba(80,40,140,0.35)";
+      ctx.beginPath(); ctx.ellipse(68, 40, 55, 28, 0, 0, Math.PI*2); ctx.fill();
+      // Title
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.font = "italic 7px serif"; ctx.fillStyle = "#ccbb55";
+      ctx.fillText("Once Upon an", 68, 21);
+      ctx.font = "bold 13px sans-serif";
+      ctx.fillStyle = "#ffe044";
+      ctx.shadowColor = "#cc8800"; ctx.shadowBlur = 6;
+      ctx.fillText("SMG4", 68, 31);
+      ctx.shadowBlur = 0;
+      // Mini Mr. Puzzles silhouette bottom-center
+      ctx.fillStyle = "#1a1a2a";
+      ctx.fillRect(61, 55, 14, 9);  // TV head box
+      ctx.fillRect(63, 49, 10, 7);  // upper TV section
+      ctx.fillRect(67, 47, 2, 3);   // antenna rod
+      ctx.fillStyle = "#ffdd00"; ctx.fillRect(67, 46, 2, 2); // antenna ball
+    }));
+
     // Goomba 32×28
     this.textures.addCanvas("goomba", this.makeCanvas(32, 28, ctx => {
       ctx.fillStyle = "#8B4513"; ctx.fillRect(2, 10, 28, 18);
@@ -1647,7 +1719,12 @@ export class GameScene extends Phaser.Scene {
           }
         }
         if (this.nearWarpId >= 0 && downJust && !downConsumed) {
-          this.enterWorld(this.nearWarpId);
+          if (this.nearWarpId === 1 && this.mysteriesComplete) {
+            downConsumed = true;
+            this.startOnceUponCutscene();
+          } else {
+            this.enterWorld(this.nearWarpId);
+          }
         }
       } else if (this.worldId !== 0 && this.returnTVGroup) {
         // World → return TV
@@ -2161,17 +2238,19 @@ export class GameScene extends Phaser.Scene {
       const sw  = isHanging ? HANG_TV_SW : TV_SW;
       const sh  = isHanging ? HANG_TV_SH : TV_SH;
       const key = i === 0 ? "marios-mysteries-cropped"
+                : i === 1 && this.mysteriesComplete ? "once-upon-smg4"
                 : i === 7 ? "puzzlevision"
                 : "tv-static-0";
       const img = this.add.image(pos.x, pos.y, key).setDisplaySize(sw, sh).setDepth(2);
       this.tvScreenImages.push(img);
     }
 
-    // ── Animate static TVs (indices 1–6; 0 = Mario's Mysteries, 7 = Puzzlevision) ─
+    // ── Animate static TVs (indices 1–6; skip TV 1 once mysteries are complete) ─
     this.time.addEvent({
       delay: 80, loop: true,
       callback: () => {
         for (let i = 1; i <= 6; i++) {
+          if (i === 1 && this.mysteriesComplete) continue;
           this.tvScreenImages[i].setTexture(`tv-static-${Math.floor(Math.random() * TV_STATIC_FRAMES)}`);
         }
       },
@@ -2585,46 +2664,14 @@ export class GameScene extends Phaser.Scene {
           g.fillCircle(CHX + 26 + bxi * 28, FL - 256 + byi * 52, 3);
       }
 
-      // ── MR. PUZZLES NPC (seated in red chair, visible after bathroom key) ───────
+      // ── MR. PUZZLES NPC (seated in red chair) — uses same sprite texture as playable ──
       {
         const MPX = 1370, MPY = FL;
-        this.mrPuzzlesGfx = this.add.graphics().setDepth(3).setVisible(this.bathroomUnlocked);
-        const mg = this.mrPuzzlesGfx;
-        const s = 2.0;   // scale factor (playable sprite is 36x42)
-        const ox = MPX - 18 * s, oy = MPY - 42 * s;
-        const r = (x: number, y: number, w: number, h: number, col: number) => {
-          mg.fillStyle(col); mg.fillRect(ox + x * s, oy + y * s, w * s, h * s);
-        };
-        const ci = (x: number, y: number, rad: number, col: number) => {
-          mg.fillStyle(col); mg.fillCircle(ox + x * s, oy + y * s, rad * s);
-        };
-        // Antenna
-        r(17, 0, 2, 6, 0x666666);
-        ci(18, 0, 2, 0xffdd00);
-        // TV head (gray)
-        r(5, 4, 26, 16, 0x888888);
-        // Screen
-        r(7, 6, 22, 12, 0x222222);
-        // Color-bar mouth
-        r(7, 13, 6, 5, 0xff4444);  r(13, 13, 5, 5, 0x44dd44);
-        r(18, 13, 5, 5, 0xffdd00); r(23, 13, 6, 5, 0x4488ff);
-        // Eyes
-        ci(13, 9, 2, 0xaabbcc); ci(23, 9, 2, 0xaabbcc);
-        mg.fillStyle(0x000000); mg.fillRect(ox + 12 * s, oy + 9 * s, 2 * s, 2 * s);
-        mg.fillStyle(0x000000); mg.fillRect(ox + 22 * s, oy + 9 * s, 2 * s, 2 * s);
-        // Black suit
-        r(5, 20, 26, 16, 0x111111);
-        // White shirt + bow tie
-        r(13, 20, 10, 8, 0xffffff);
-        mg.fillStyle(0x111111);
-        mg.fillTriangle(ox+14*s, oy+20*s, ox+18*s, oy+23*s, ox+14*s, oy+26*s);
-        mg.fillTriangle(ox+22*s, oy+20*s, ox+18*s, oy+23*s, ox+22*s, oy+26*s);
-        // Arms
-        r(0, 21, 6, 3, 0x111111); r(30, 21, 6, 3, 0x111111);
-        r(0, 18, 5, 8, 0x333333); r(31, 18, 5, 8, 0x333333);
-        // Pants + shoes
-        r(9, 36, 18, 6, 0x111111);
-        r(8, 39, 9, 3, 0x000000); r(19, 39, 9, 3, 0x000000);
+        this.mrPuzzlesGfx = this.add.image(MPX, MPY, "mrpuzzles-sprite")
+          .setDisplaySize(72, 84)          // 36×2 × 42×2
+          .setOrigin(0.5, 1)               // anchor bottom-center at floor level
+          .setDepth(3)
+          .setVisible(this.bathroomUnlocked);
       }
 
       // ── BEDROOM DOOR (x=W1_BEDROOM_X=1410, warp door to bedroom sub-room) ──────
@@ -4632,8 +4679,15 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(5500, () => {
         this.showPersonDialogue("Mario: Yeah.", "#ff4422", 2200);
       });
+      // SMG4's exasperated follow-up
+      this.time.delayedCall(8200, () => {
+        this.showPersonDialogue(
+          "SMG4: ...until we can get out of here!",
+          "#ffcc44", 2500
+        );
+      });
       // Fade out and return to theater
-      this.time.delayedCall(8000, () => {
+      this.time.delayedCall(11000, () => {
         this.cameras.main.fadeOut(1500, 0, 0, 0);
         this.cameras.main.once("camerafadeoutcomplete", () => {
           this.scene.start("GameScene", {
@@ -4661,6 +4715,239 @@ export class GameScene extends Phaser.Scene {
     this.guessPromptObjs.forEach(o => o.destroy());
     this.guessPromptObjs = [];
     this.guessTextObj    = null;
+  }
+
+  // ── Once Upon an SMG4 — in-theater cutscene ─────────────────────────────────
+
+  private startOnceUponCutscene() {
+    if (this.dying) return;
+    this.dying = true;
+
+    const W = 1280, H = 720, D = 40;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.onceUponObjs.push(o); return o;
+    };
+    const cleanup = () => {
+      this.onceUponObjs.forEach(o => o.destroy());
+      this.onceUponObjs = [];
+      this.dying = false;
+    };
+
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    // ── Full black backing ───────────────────────────────────────────────────
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x000000, 1).fillRect(0, 0, W, H);
+
+    // ── Phase 1 – Witchy Room + SMG4 as witch ────────────────────────────────
+    const roomG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    this.drawWitchyRoom(roomG, W, H);
+
+    const charG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    this.drawSmg4Witch(charG, W / 2, Math.round(H * 0.73));
+
+    // Narrator box
+    const boxG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    const boxH = 90, boxY = H - boxH - 14;
+    boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
+    boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
+
+    const narr = push(this.add.text(W / 2, boxY + boxH / 2,
+      "Narrator: Our story takes place in the magical land of SMG4.\nThere lived a selfish and cruel witch.",
+      { fontSize: "15px", color: "#ddddff", align: "center",
+        wordWrap: { width: W - 120 }, lineSpacing: 4 }
+    ).setScrollFactor(0).setDepth(D + 4).setOrigin(0.5, 0.5));
+
+    // ── Phase 2 (after 5 s) – Princess scene ────────────────────────────────
+    this.time.delayedCall(5000, () => {
+      roomG.clear(); charG.clear();
+      this.drawPrincessRoom(roomG, W, H);
+      this.drawSmg3Princess(charG, W / 2, Math.round(H * 0.73));
+      narr.setText("And a beautiful princess, pure of heart.");
+    });
+
+    // ── End (after 9.5 s) – fade out and return to theater ──────────────────
+    this.time.delayedCall(9500, () => {
+      this.cameras.main.fadeOut(1200, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        cleanup();
+        this.cameras.main.fadeIn(600);
+      });
+    });
+  }
+
+  private drawWitchyRoom(g: Phaser.GameObjects.Graphics, W: number, H: number) {
+    // Very dark green-lit room
+    g.fillStyle(0x010d04).fillRect(0, 0, W, H);
+    // Green ambient glow (right side — window light)
+    g.fillStyle(0x00cc55, 0.06).fillRect(W * 0.55, 0, W * 0.45, H * 0.75);
+    g.fillStyle(0x00aa44, 0.09).fillRect(W * 0.65, 0, W * 0.35, H * 0.6);
+    // Floor
+    g.fillStyle(0x050a02).fillRect(0, H * 0.82, W, H * 0.18);
+    g.fillStyle(0x0a1104).fillRect(0, H * 0.82, W, 6);
+    // Back wall shelves
+    g.fillStyle(0x1a0e00).fillRect(W * 0.55, H * 0.28, W * 0.45, 8);  // shelf 1
+    g.fillStyle(0x1a0e00).fillRect(W * 0.5, H * 0.48, W * 0.5, 8);    // shelf 2
+    // Candle on shelf 1
+    const cx1 = W * 0.6, cy1 = H * 0.28;
+    g.fillStyle(0xddddbb).fillRect(cx1 - 6, cy1 - 44, 12, 44);        // candle body
+    g.fillStyle(0x222200).fillRect(cx1 - 1, cy1 - 46, 2, 4);          // wick
+    g.fillStyle(0xff8800, 0.9).fillCircle(cx1, cy1 - 48, 8);           // flame outer
+    g.fillStyle(0xffff88, 0.9).fillCircle(cx1, cy1 - 50, 4);           // flame inner
+    // Candle glow halo
+    g.fillStyle(0xff8800, 0.06).fillCircle(cx1, cy1 - 46, 60);
+    // Skull on shelf 1
+    const skX = W * 0.72, skY = H * 0.28;
+    g.fillStyle(0xbcb89a).fillCircle(skX, skY - 16, 14);
+    g.fillStyle(0x010d04).fillRect(skX - 8, skY - 20, 6, 7);           // left eye socket
+    g.fillStyle(0x010d04).fillRect(skX + 2, skY - 20, 6, 7);           // right eye socket
+    g.fillStyle(0xbcb89a).fillRect(skX - 10, skY - 5, 20, 8);          // jaw
+    g.fillStyle(0x010d04);
+    for (let tx = 0; tx < 4; tx++) g.fillRect(skX - 6 + tx * 5, skY - 3, 3, 5); // teeth gaps
+    // Spider web – top left corner (approximated with Graphics)
+    const wx = W * 0.12, wy = H * 0.1;
+    g.fillStyle(0xaabbaa, 0.35);
+    for (let i = 0; i < 6; i++) {
+      const ang = (i * Math.PI) / 3;
+      const len = 56;
+      const ex = wx + Math.cos(ang) * len, ey = wy + Math.sin(ang) * len * 0.65;
+      // Approximate the radial line with 4 thin rects
+      for (let seg = 0; seg < 4; seg++) {
+        const t = seg / 4;
+        g.fillRect(wx + (ex - wx) * t - 1, wy + (ey - wy) * t - 1, 2, 2);
+      }
+    }
+    // Concentric ring approximations
+    for (let rad = 16; rad <= 48; rad += 16) {
+      for (let i = 0; i < 12; i++) {
+        const ang = (i * Math.PI * 2) / 12;
+        g.fillRect(wx + Math.cos(ang) * rad - 1, wy + Math.sin(ang) * rad * 0.65 - 1, 2, 2);
+      }
+    }
+    // "MURDER" sign on back wall (faint)
+    g.fillStyle(0x1a3a1a).fillRect(W * 0.3, H * 0.08, 140, 28);
+    g.fillStyle(0x2a5a2a).fillRect(W * 0.3 + 2, H * 0.08 + 2, 136, 24);
+  }
+
+  private drawSmg4Witch(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    const s = 2.6;
+    const ox = cx - Math.round(18 * s), oy = baseY - Math.round(42 * s);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * s, oy + y * s, w * s, h * s);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * s, oy + y * s, rad * s);
+    };
+    // ── Witch hat (tall black pointy hat) ─────────────────────────────────
+    g.fillStyle(0x0d0d0d);
+    g.fillTriangle(
+      ox + 18 * s, oy - 34 * s,   // tip
+      ox + 0  * s, oy +  5 * s,   // brim left
+      ox + 36 * s, oy +  5 * s    // brim right
+    );
+    r(-5, 2, 46, 6, 0x1a1a1a);    // wide brim
+    r(5, -2, 26, 4, 0x1f6b28);    // green hat band
+    ci(18, -2, 3, 0x44cc55);      // hat band gem
+    // ── TV head (green-tinted) ────────────────────────────────────────────
+    r(5,  4, 26, 16, 0x2e4a2e);
+    r(7,  6, 22, 12, 0x050f05);   // screen (dark green)
+    // Glowing menacing eyes
+    ci(13, 9, 2.5, 0xcc2200);
+    ci(23, 9, 2.5, 0xcc2200);
+    g.fillStyle(0xff5500); g.fillRect(ox + 12 * s, oy + 8 * s, 3 * s, 3 * s);
+    g.fillStyle(0xff5500); g.fillRect(ox + 22 * s, oy + 8 * s, 3 * s, 3 * s);
+    // Color bars — darker/spookier palette
+    r(7, 13, 6, 5, 0x881100); r(13, 13, 5, 5, 0x115511);
+    r(18, 13, 5, 5, 0x776600); r(23, 13, 6, 5, 0x112244);
+    // ── Dark witch robes ──────────────────────────────────────────────────
+    r(5, 20, 26, 16, 0x0d1a0d);
+    r(13, 20, 10,  8, 0x1a2e1a);  // shirt
+    // Bow tie – dark green
+    g.fillStyle(0x0a3312);
+    g.fillTriangle(ox+14*s, oy+20*s, ox+18*s, oy+23*s, ox+14*s, oy+26*s);
+    g.fillTriangle(ox+22*s, oy+20*s, ox+18*s, oy+23*s, ox+22*s, oy+26*s);
+    // Arms
+    r(0, 21, 6, 3, 0x0d1a0d); r(30, 21, 6, 3, 0x0d1a0d);
+    r(0, 18, 5, 8, 0x1a2a1a); r(31, 18, 5, 8, 0x1a2a1a);
+    // Robe hem / pants
+    r(9, 36, 18, 6, 0x080808);
+    r(8, 39, 9, 3, 0x040404); r(19, 39, 9, 3, 0x040404);
+  }
+
+  private drawSmg3Princess(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    const s = 2.6;
+    const ox = cx - Math.round(18 * s), oy = baseY - Math.round(42 * s);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * s, oy + y * s, w * s, h * s);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * s, oy + y * s, rad * s);
+    };
+    // ── Golden tiara/crown ────────────────────────────────────────────────
+    r(10, -7, 16, 4, 0xddaa22);   // crown band
+    r(10, -10, 4, 4, 0xddaa22);   // left spike
+    r(16, -12, 4, 6, 0xffcc44);   // center spike (tallest)
+    r(22, -10, 4, 4, 0xddaa22);   // right spike
+    ci(18, -12, 2.5, 0xff3355);   // center gem
+    // ── SMG3 sprite (purple cap + skull, red eyes, goatee, purple suit) ──
+    r(4,  0, 28, 8, 0x8822cc);    // purple cap
+    r(1,  7, 34, 4, 0x8822cc);    // cap brim
+    r(14, 1,  8, 6, 0xffffff);    // skull background
+    r(15, 2,  2, 2, 0x8822cc); r(19, 2,  2, 2, 0x8822cc);
+    r(14, 5,  8, 1, 0x8822cc);    // skull teeth
+    r(6,  9, 24, 4, 0x111100);    // dark hair
+    r(8, 10, 20,12, 0xffcc88);    // face
+    r(11,13,  4, 3, 0xff2200);    // red eyes
+    r(12,13,  2, 2, 0xff8866);
+    r(21,13,  4, 3, 0xff2200);
+    r(22,13,  2, 2, 0xff8866);
+    r(15,19,  6, 3, 0x222200);    // goatee
+    r(4, 22, 28,14, 0x8822cc);    // purple shirt
+    r(0, 26, 36,10, 0x551199);    // purple pants
+    r(14,23,  8, 6, 0xffffff);    // chest skull
+    r(15,24,  2, 2, 0x8822cc); r(19,24,  2, 2, 0x8822cc);
+    r(14,27,  8, 1, 0x8822cc);
+    r(1, 36, 14, 6, 0x111111);    // boots
+    r(21,36, 14, 6, 0x111111);
+    // ── Princess dress (pink skirt over legs) ─────────────────────────────
+    r(-4, 26, 44, 16, 0xcc44aa);  // skirt body
+    r(-6, 36, 48,  8, 0xdd66bb);  // skirt hem
+    ci(18, 28, 3, 0xff88cc);      // skirt brooch
+  }
+
+  private drawPrincessRoom(g: Phaser.GameObjects.Graphics, W: number, H: number) {
+    // Bright castle interior — soft blues and pinks
+    g.fillStyle(0x9ac8f8).fillRect(0, 0, W, H);              // sky-blue wall
+    g.fillStyle(0xc8e4ff, 0.5).fillRect(0, 0, W, H * 0.5);  // lighter top
+    // Arched window (center back)
+    g.fillStyle(0x7aaee8).fillRect(W * 0.36, H * 0.04, W * 0.28, H * 0.44);
+    g.fillStyle(0xb0d8ff).fillRect(W * 0.38, H * 0.04, W * 0.24, H * 0.28);
+    // Window arch (semi-circle via stacked rects)
+    g.fillStyle(0xb0d8ff);
+    for (let wr = 0; wr <= 10; wr++) {
+      const hw = (W * 0.12) * Math.sin((wr / 10) * Math.PI);
+      g.fillRect(W * 0.5 - hw, H * 0.04 + wr * 2, hw * 2, 2);
+    }
+    // Sunbeams from window
+    g.fillStyle(0xffeebb, 0.18).fillRect(W * 0.4, H * 0.04, W * 0.2, H * 0.7);
+    // Stone-tile floor
+    g.fillStyle(0xc8b49a).fillRect(0, H * 0.8, W, H * 0.2);
+    for (let tx = 0; tx < W; tx += 120) {
+      g.fillStyle(0xb8a48a).fillRect(tx, H * 0.8, 2, H * 0.2);
+    }
+    g.fillStyle(0xb8a48a).fillRect(0, H * 0.87, W, 2);
+    // Pink rose vines on sides
+    g.fillStyle(0x448822).fillRect(0, H * 0.2, 20, H * 0.6);
+    g.fillStyle(0x448822).fillRect(W - 20, H * 0.2, 20, H * 0.6);
+    const rosePositions = [0.3, 0.45, 0.6, 0.75];
+    for (const ry of rosePositions) {
+      g.fillStyle(0xff3377).fillCircle(10, ry * H, 8);
+      g.fillStyle(0xff3377).fillCircle(W - 10, ry * H, 8);
+    }
+    // Decorative banner
+    g.fillStyle(0x6622bb).fillRect(W * 0.2, 0, W * 0.6, 18);
+    g.fillStyle(0xffdd44);
+    for (let bx = W * 0.2 + 10; bx < W * 0.8; bx += 40) g.fillRect(bx, 4, 20, 10);
   }
 
   // ── Painting smoke animation ─────────────────────────────────────────────────
