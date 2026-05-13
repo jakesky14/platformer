@@ -188,6 +188,18 @@ export class GameScene extends Phaser.Scene {
   private cutsceneDone   = false;
   private cutsceneStep   = 0;
   private cutsceneObjs:  Phaser.GameObjects.GameObject[] = [];
+  // Mr. Puzzles + inventory + pipe
+  private hasPipeBomb      = false;
+  private mrPuzzlesGreeted = false;
+  private pipeBombUsed     = false;
+  private inventoryOpen    = false;
+  private inventoryObjs:   Phaser.GameObjects.GameObject[] = [];
+  private mrPuzzlesGfx:    Phaser.GameObjects.Graphics | null = null;
+  private pipeRevealGfx:   Phaser.GameObjects.Graphics | null = null;
+  private pipeZLabel:      Phaser.GameObjects.Text     | null = null;
+  private keyX!:           Phaser.Input.Keyboard.Key;
+  private phoneLogOpen     = false;
+  private phoneLogObjs:    Phaser.GameObjects.GameObject[] = [];
 
   // Yoshi-specific
   private yoshiStomach: "empty" | "goomba" | "koopa" = "empty";
@@ -240,6 +252,9 @@ export class GameScene extends Phaser.Scene {
       this.bathroomUnlocked = false;
       this.bedroomUnlocked  = false;
       this.luigiGreeted     = false;
+      this.hasPipeBomb      = false;
+      this.mrPuzzlesGreeted = false;
+      this.pipeBombUsed     = false;
       this.phoneLog         = [];
     }
     this.phoneIconObj        = null;
@@ -256,6 +271,13 @@ export class GameScene extends Phaser.Scene {
     this.cutsceneDone        = false;
     this.cutsceneStep        = 0;
     this.cutsceneObjs        = [];
+    this.inventoryOpen       = false;
+    this.inventoryObjs       = [];
+    this.mrPuzzlesGfx        = null;
+    this.pipeRevealGfx       = null;
+    this.pipeZLabel          = null;
+    this.phoneLogOpen        = false;
+    this.phoneLogObjs        = [];
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
@@ -1251,6 +1273,7 @@ export class GameScene extends Phaser.Scene {
       const px = this.player.x, py = this.player.y;
       const onMainFloor = px < 1920;
       const inKitchen   = px >= W1_K_LEFT && px < W1_K_RIGHT;
+      const inBathroom  = px >= W1_B_LEFT && px < W1_B_RIGHT;
 
       // Phone pickup — on desk (DX=620)
       if (!this.hasPhone && onMainFloor && Math.abs(px - 668) < 60 && py > W1_FL - 220) {
@@ -1280,11 +1303,24 @@ export class GameScene extends Phaser.Scene {
           this.meatballActive = false;
           this.addClue("The color RED — from Luigi's tomato sauce.");
           this.showDialogue("Clue logged to phone:\n\"The color RED\"", "#ff6644", 4000);
-          // Luigi gives bathroom key
           this.bathroomUnlocked = true;
+          this.mrPuzzlesGfx?.setVisible(true);
           this.time.delayedCall(1500, () => {
             this.showDialogue("Luigi: Great work! Here's the bathroom key!", "#44ff44", 3500);
           });
+        }
+      }
+
+      // Inspect pipe meatball (second clue)
+      else if (inBathroom && this.pipeRevealGfx?.visible) {
+        const pipeX = W1_BRETURN_X + 66;
+        if (Math.abs(px - pipeX) < 65) {
+          this.pipeRevealGfx.setVisible(false);
+          this.pipeZLabel?.setVisible(false);
+          this.addClue("A pipe — the spaghetti was hidden inside!");
+          this.showDialogue("Clue logged to phone:\n\"A pipe\"", "#88ff88", 4000);
+          this.bedroomUnlocked = true;
+          this.time.delayedCall(800, () => this.showSmg4CluePopup("Another clue!"));
         }
       }
     }
@@ -1356,14 +1392,13 @@ export class GameScene extends Phaser.Scene {
             if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) this.enterWorld(9);
           }
         }
-        // World 9 — Luigi NPC dialogue (↓ near mallet in kitchen)
+        // World 9 — Luigi NPC dialogue (↓ near mallet in kitchen, no enter prompt)
         if (this.worldId === 9 && !promptVisible) {
           const px = this.player.x, py = this.player.y;
           const inKitchen = px >= W1_K_LEFT && px < W1_K_RIGHT;
           if (inKitchen) {
             const LX = W1_K_LEFT + 650;
             if (Math.abs(px - LX) < 55 && py > W1_FL - 180) {
-              promptX = LX; promptY = W1_FL - 200; promptVisible = true;
               if (Phaser.Input.Keyboard.JustDown(this.cursors.down) && !this.luigiGreeted) {
                 this.luigiGreeted = true;
                 this.showDialogue("Luigi: I need your help! I'm making red pasta\nsauce! Can you make some for me?", "#44ff44", 5000);
@@ -1371,18 +1406,32 @@ export class GameScene extends Phaser.Scene {
             }
           }
         }
-        // World 9 — Boopkins NPC dialogue (↓ near Boopkins in bathroom)
+        // World 9 — Boopkins NPC dialogue (↓ near Boopkins in bathroom, no enter prompt)
         if (this.worldId === 9 && !promptVisible) {
           const px = this.player.x, py = this.player.y;
           const inBathroom = px >= W1_B_LEFT && px < W1_B_RIGHT;
           if (inBathroom) {
             const BKX = W1_BRETURN_X + 500;
-            if (Math.abs(px - BKX) < 55 && py > W1_FL - 150) {
-              promptX = BKX; promptY = W1_FL - 200; promptVisible = true;
+            if (Math.abs(px - BKX) < 55 && py > W1_FL - 150 && !this.pipeBombUsed) {
               if (Phaser.Input.Keyboard.JustDown(this.cursors.down) && !this.boopkinsGreeted) {
                 this.boopkinsGreeted = true;
                 this.showDialogue("Boopkins: I'm about to sing my faaaavorite song!\nDo you want to sing with me Mario!", "#00cccc", 5000);
                 this.startBoopkinsSinging();
+              }
+            }
+          }
+        }
+        // World 9 — Mr. Puzzles NPC (main floor near red chair, after bathroom key)
+        if (this.worldId === 9 && !promptVisible) {
+          const px = this.player.x, py = this.player.y;
+          const onMainFloor = px < 1920;
+          if (onMainFloor && this.bathroomUnlocked && !this.mrPuzzlesGreeted) {
+            const MPX = 1370;
+            if (Math.abs(px - MPX) < 60 && py > W1_FL - 150) {
+              if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+                this.mrPuzzlesGreeted = true;
+                this.showDialogue("Mr. Puzzles: TV time!\nWatch the Mario Movie with bonus features!", "#ffff44", 4000);
+                this.time.delayedCall(4500, () => this.showMovieCutscene());
               }
             }
           }
@@ -1431,6 +1480,13 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── World 9 X key → inventory ─────────────────────────────────────────────
+    if (this.worldId === 9 && Phaser.Input.Keyboard.JustDown(this.keyX)) {
+      if (this.inventoryOpen) this.closeInventory();
+      else if (this.hasPipeBomb) this.openInventory();
+      else if (this.phoneLogOpen) this.closePhoneLog();
+    }
+
     // ── World 9 dynamic Z labels ──────────────────────────────────────────────
     if (this.worldId === 9) {
       const px = this.player.x, py = this.player.y;
@@ -1444,6 +1500,10 @@ export class GameScene extends Phaser.Scene {
         this.meatballZLabel.setVisible(
           this.meatballActive && Math.abs(px - (CTX + 35)) < 70
         );
+      }
+      if (this.pipeZLabel && this.pipeRevealGfx?.visible) {
+        const pipeX = W1_BRETURN_X + 66;
+        this.pipeZLabel.setVisible(Math.abs(px - pipeX) < 65);
       }
     }
 
@@ -2189,6 +2249,48 @@ export class GameScene extends Phaser.Scene {
           g.fillCircle(CHX + 26 + bxi * 28, FL - 256 + byi * 52, 3);
       }
 
+      // ── MR. PUZZLES NPC (seated in red chair, visible after bathroom key) ───────
+      {
+        const MPX = 1370, MPY = FL;
+        this.mrPuzzlesGfx = this.add.graphics().setDepth(3).setVisible(this.bathroomUnlocked);
+        const mg = this.mrPuzzlesGfx;
+        const s = 2.0;   // scale factor (playable sprite is 36x42)
+        const ox = MPX - 18 * s, oy = MPY - 42 * s;
+        const r = (x: number, y: number, w: number, h: number, col: number) => {
+          mg.fillStyle(col); mg.fillRect(ox + x * s, oy + y * s, w * s, h * s);
+        };
+        const ci = (x: number, y: number, rad: number, col: number) => {
+          mg.fillStyle(col); mg.fillCircle(ox + x * s, oy + y * s, rad * s);
+        };
+        // Antenna
+        r(17, 0, 2, 6, 0x666666);
+        ci(18, 0, 2, 0xffdd00);
+        // TV head (gray)
+        r(5, 4, 26, 16, 0x888888);
+        // Screen
+        r(7, 6, 22, 12, 0x222222);
+        // Color-bar mouth
+        r(7, 13, 6, 5, 0xff4444);  r(13, 13, 5, 5, 0x44dd44);
+        r(18, 13, 5, 5, 0xffdd00); r(23, 13, 6, 5, 0x4488ff);
+        // Eyes
+        ci(13, 9, 2, 0xaabbcc); ci(23, 9, 2, 0xaabbcc);
+        mg.fillStyle(0x000000); mg.fillRect(ox + 12 * s, oy + 9 * s, 2 * s, 2 * s);
+        mg.fillStyle(0x000000); mg.fillRect(ox + 22 * s, oy + 9 * s, 2 * s, 2 * s);
+        // Black suit
+        r(5, 20, 26, 16, 0x111111);
+        // White shirt + bow tie
+        r(13, 20, 10, 8, 0xffffff);
+        mg.fillStyle(0x111111);
+        mg.fillTriangle(ox+14*s, oy+20*s, ox+18*s, oy+23*s, ox+14*s, oy+26*s);
+        mg.fillTriangle(ox+22*s, oy+20*s, ox+18*s, oy+23*s, ox+22*s, oy+26*s);
+        // Arms
+        r(0, 21, 6, 3, 0x111111); r(30, 21, 6, 3, 0x111111);
+        r(0, 18, 5, 8, 0x333333); r(31, 18, 5, 8, 0x333333);
+        // Pants + shoes
+        r(9, 36, 18, 6, 0x111111);
+        r(8, 39, 9, 3, 0x000000); r(19, 39, 9, 3, 0x000000);
+      }
+
       // ── BEDROOM DOOR (x=W1_BEDROOM_X=1410, warp door to bedroom sub-room) ──────
       {
         const CDX = W1_BEDROOM_X;
@@ -2653,6 +2755,31 @@ export class GameScene extends Phaser.Scene {
         this.meatballZLabel = this.add.text(CTX + 35, CTY - 165, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(4).setVisible(false);
       }
 
+      // Bathroom pipe reveal — hidden until Boopkins explodes
+      {
+        const pipeX = W1_BRETURN_X + 66;   // toilet center x
+        const pipeY = W1_FL;
+        this.pipeRevealGfx = this.add.graphics().setVisible(false).setDepth(3);
+        const pg = this.pipeRevealGfx;
+        // Green Warp Pipe
+        pg.fillStyle(0x228822); pg.fillRect(pipeX - 16, pipeY - 82, 32, 70);
+        pg.fillStyle(0x44cc44); pg.fillRect(pipeX - 14, pipeY - 80, 10, 68);
+        pg.fillStyle(0x1a6a1a); pg.fillRect(pipeX - 16, pipeY - 82, 32, 3);
+        // Pipe cap (wider)
+        pg.fillStyle(0x1a7a1a); pg.fillRect(pipeX - 22, pipeY - 88, 44, 14);
+        pg.fillStyle(0x44cc44); pg.fillRect(pipeX - 18, pipeY - 86, 12, 10);
+        // Meatball peeking from pipe top
+        pg.fillStyle(0x883311); pg.fillCircle(pipeX, pipeY - 95, 14);
+        pg.fillStyle(0xaa5533); pg.fillCircle(pipeX - 4, pipeY - 100, 8);
+        pg.fillStyle(0x662200); pg.fillCircle(pipeX + 5, pipeY - 99, 5);
+        pg.fillStyle(0xdd4400, 0.6);
+        pg.fillCircle(pipeX - 14, pipeY - 88, 4); pg.fillCircle(pipeX + 18, pipeY - 88, 3);
+        // Z label
+        this.pipeZLabel = this.add.text(pipeX, pipeY - 116, "Z", {
+          fontSize: "9px", color: "#ffffff", stroke: "#000", strokeThickness: 2,
+        }).setOrigin(0.5, 0).setDepth(4).setVisible(false);
+      }
+
       return;
     }
 
@@ -2733,6 +2860,7 @@ export class GameScene extends Phaser.Scene {
     this.keyW     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W);
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.keyZ     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
+    this.keyX     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.X);
     // Use event-driven flag so no keypress is ever missed between frames
     this.keyShift.on("down", () => { if (!this.holdingMallet) this.dashPending = true; });
   }
@@ -2768,6 +2896,14 @@ export class GameScene extends Phaser.Scene {
       phoneGroup.forEach(o => (o as Phaser.GameObjects.GameObject & { setVisible(v: boolean): void }).setVisible(this.hasPhone));
       // Store reference to update visibility later
       this.phoneIconObj.setData("gfx", pg);
+
+      // Clickable zone over phone icon — opens clue log
+      const phoneBtnW = 42, phoneBtnH = 46;
+      const phoneBtn = this.add.rectangle(phoneX + 9, 49, phoneBtnW, phoneBtnH)
+        .setScrollFactor(0).setDepth(11).setInteractive({ useHandCursor: true }).setAlpha(0.01);
+      phoneBtn.on("pointerdown", () => { if (this.hasPhone) this.togglePhoneLog(); });
+      phoneBtn.on("pointerover",  () => { if (this.hasPhone) pg.setAlpha(0.7); });
+      phoneBtn.on("pointerout",   () => pg.setAlpha(1));
     }
 
     if (this.character === "yoshi") {
@@ -3226,134 +3362,142 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawCutsceneSmg4(g: Phaser.GameObjects.Graphics, cx: number, baseY: number, _s: number, hasGun = false) {
-    const BY = baseY;
-    // TV head (blue)
-    g.fillStyle(0x2244cc); g.fillRoundedRect(cx - 38, BY - 110, 76, 68, 6);
-    // Screen (dark, color bars)
-    g.fillStyle(0x111122); g.fillRect(cx - 30, BY - 104, 60, 54);
-    const barColors = [0xff2222, 0xffcc00, 0x22cc22, 0x2288ff, 0xff44ff, 0x22ffee];
-    barColors.forEach((c, i) => {
-      g.fillStyle(c); g.fillRect(cx - 30 + i * 10, BY - 104, 10, 54);
-    });
-    g.fillStyle(0x000000, 0.35); g.fillRect(cx - 30, BY - 104, 60, 54);
-    // Antenna
-    g.fillStyle(0x888888);
-    g.fillRect(cx - 4, BY - 122, 4, 16);
-    g.fillRect(cx - 2, BY - 118, 4, 10);
-    // Neck
-    g.fillStyle(0x2244cc); g.fillRect(cx - 6, BY - 42, 12, 14);
-    // Bow tie
-    g.fillStyle(0xcc2222);
-    g.fillTriangle(cx - 16, BY - 36, cx, BY - 30, cx - 16, BY - 24);
-    g.fillTriangle(cx + 16, BY - 36, cx, BY - 30, cx + 16, BY - 24);
-    g.fillCircle(cx, BY - 30, 5);
-    // Body (blue shirt)
-    g.fillStyle(0x2244cc);
-    g.fillRect(cx - 26, BY - 28, 52, 38);
-    // Arms
-    g.fillStyle(0x2244cc);
-    g.fillRect(cx - 44, BY - 28, 20, 30);
-    if (!hasGun) {
-      g.fillRect(cx + 24, BY - 28, 20, 30);
-    } else {
-      // Gun arm (right side)
-      g.fillRect(cx + 24, BY - 28, 20, 18);
-      g.fillStyle(0x333333);
-      g.fillRect(cx + 38, BY - 26, 22, 12);
-      g.fillRect(cx + 52, BY - 30, 8, 20);
+    // SMG4 portrait — matches playable sprite style (blue cap + S badge, white overalls)
+    const scale = 2.6;
+    const ox = cx - Math.round(18 * scale);
+    const oy = baseY - Math.round(42 * scale);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * scale, oy + y * scale, w * scale, h * scale);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * scale, oy + y * scale, rad * scale);
+    };
+    // Blue cap
+    r(4,  0, 28, 8, 0x2244cc);
+    r(1,  7, 34, 4, 0x2244cc);
+    // S badge (white bg + blue S shape)
+    r(14, 1, 8, 6, 0xffffff);
+    r(14, 1, 8, 2, 0x4488ee);
+    r(14, 4, 8, 2, 0x4488ee);
+    r(14, 6, 8, 2, 0x4488ee);
+    r(14, 1, 2, 3, 0x4488ee);
+    r(20, 4, 2, 3, 0x4488ee);
+    // Dark hair
+    r(6,  9, 24, 4, 0x222200);
+    // Face
+    r(8, 10, 20, 12, 0xffcc88);
+    // Eyes
+    r(11, 13, 3, 3, 0x000000);
+    r(22, 13, 3, 3, 0x000000);
+    // Mustache
+    r(10, 19, 6, 2, 0x333333);
+    r(20, 19, 6, 2, 0x333333);
+    // White overalls
+    r(0, 22, 36, 14, 0xffffff);
+    // Blue shirt center
+    r(10, 22, 16, 6, 0x2244cc);
+    // Gray straps + yellow buttons
+    r(4,  22, 6, 8, 0xdddddd);
+    r(26, 22, 6, 8, 0xdddddd);
+    r(5,  23, 3, 3, 0xffdd00);
+    r(27, 23, 3, 3, 0xffdd00);
+    // Blue arms
+    r(0,  22, 4, 12, 0x2244cc);
+    r(32, 22, 4, 12, 0x2244cc);
+    // White gloves
+    ci(2,  28, 4, 0xffffff);
+    ci(34, 28, 4, 0xffffff);
+    // Brown boots
+    r(1,  36, 14, 6, 0x6b3a1e);
+    r(21, 36, 14, 6, 0x6b3a1e);
+    // Legs (blue)
+    r(4,  36, 12, 4, 0x1133cc);
+    r(20, 36, 12, 4, 0x1133cc);
+    if (hasGun) {
+      // Black pistol in right hand
+      r(32, 20, 14, 8,  0x222222);
+      r(38, 14, 8,  14, 0x444444);
     }
-    // Legs
-    g.fillStyle(0x1133cc);
-    g.fillRect(cx - 22, BY + 10, 18, 24);
-    g.fillRect(cx + 4,  BY + 10, 18, 24);
-    // Shoes
-    g.fillStyle(0x222222);
-    g.fillRect(cx - 26, BY + 30, 22, 8);
-    g.fillRect(cx + 4,  BY + 30, 22, 8);
-    // Gloves / hands
-    g.fillStyle(0xffffff);
-    g.fillCircle(cx - 34, BY + 2, 8);
-    g.fillCircle(cx + 44, BY + 2, 8);
   }
 
   private drawCutsceneMarioSad(g: Phaser.GameObjects.Graphics, cx: number, baseY: number, _s: number) {
+    // Movie-style Mario: big round red cap, huge black mustache, blue fluffy body, tears
     const BY = baseY;
-    // Red cap
-    g.fillStyle(0xdd2200); g.fillRect(cx - 20, BY - 110, 40, 12);
-    g.fillRect(cx - 16, BY - 122, 32, 14);
-    // Face (skin)
-    g.fillStyle(0xffcc88); g.fillRect(cx - 18, BY - 100, 36, 26);
-    // Sad eyes (downward slant lines)
-    g.fillStyle(0x000000);
-    g.fillRect(cx - 12, BY - 92, 4, 4);
-    g.fillRect(cx + 8,  BY - 92, 4, 4);
-    // Eyebrows slanted sad
-    g.fillStyle(0x5a3010);
-    g.fillRect(cx - 14, BY - 98, 6, 2);
-    g.fillRect(cx + 8,  BY - 99, 6, 2);
-    // Frown
-    g.fillStyle(0xcc6644); g.fillRect(cx - 6, BY - 82, 12, 3);
-    g.fillRect(cx - 8, BY - 80, 4, 2);
-    g.fillRect(cx + 4, BY - 80, 4, 2);
+
+    // Blue fluffy body (large rounded blob — movie stuffed-animal look)
+    g.fillStyle(0x3399ee); g.fillEllipse(cx, BY - 28, 96, 72);
+    g.fillStyle(0x55bbff); g.fillEllipse(cx - 8, BY - 48, 42, 32);   // highlight
+
+    // Big round head (skin)
+    g.fillStyle(0xffcc88); g.fillEllipse(cx - 2, BY - 102, 72, 68);
+
+    // Big round red cap — dome
+    g.fillStyle(0xdd2200); g.fillEllipse(cx - 2, BY - 136, 84, 42);
+    // Cap back portion covers top of head
+    g.fillStyle(0xdd2200); g.fillEllipse(cx - 2, BY - 120, 74, 52);
+    // Cap brim (darker red)
+    g.fillStyle(0xbb1100); g.fillEllipse(cx - 2, BY - 107, 82, 16);
+    // White M badge circle
+    g.fillStyle(0xffffff); g.fillCircle(cx - 6, BY - 128, 14);
+    // Red M inside badge (two vertical bars + top bar)
+    g.fillStyle(0xdd2200);
+    g.fillRect(cx - 17, BY - 138, 5, 18);
+    g.fillRect(cx + 5,  BY - 138, 5, 18);
+    g.fillRect(cx - 17, BY - 138, 22, 6);
+    // M center peak (downward V between bars)
+    g.fillTriangle(cx - 12, BY - 132, cx - 6, BY - 138, cx, BY - 132);
+
+    // Blue eyes (happy/sad)
+    g.fillStyle(0xffffff); g.fillCircle(cx - 16, BY - 108, 9);
+    g.fillStyle(0xffffff); g.fillCircle(cx + 10, BY - 108, 9);
+    g.fillStyle(0x2266dd); g.fillCircle(cx - 16, BY - 108, 6);
+    g.fillStyle(0x2266dd); g.fillCircle(cx + 10, BY - 108, 6);
+    g.fillStyle(0x000000); g.fillCircle(cx - 16, BY - 108, 3);
+    g.fillStyle(0x000000); g.fillCircle(cx + 10, BY - 108, 3);
+    g.fillStyle(0xffffff); g.fillCircle(cx - 19, BY - 112, 2);
+    g.fillStyle(0xffffff); g.fillCircle(cx + 7,  BY - 112, 2);
+    // Sad eyebrows (angled down toward center)
+    g.fillStyle(0x3a1a00);
+    g.fillRect(cx - 24, BY - 121, 14, 4);
+    g.fillRect(cx + 5,  BY - 121, 14, 4);
+
+    // Big round nose
+    g.fillStyle(0xffaa66); g.fillCircle(cx - 4, BY - 97, 9);
+    g.fillStyle(0xee9955); g.fillCircle(cx - 4, BY - 97, 7);
+
+    // HUGE black bushy mustache (two overlapping ellipses)
+    g.fillStyle(0x111111);
+    g.fillEllipse(cx - 12, BY - 87, 36, 22);
+    g.fillEllipse(cx + 12, BY - 87, 36, 22);
+    g.fillEllipse(cx,      BY - 82, 56, 18);   // lower merge
+
     // Tears
-    g.fillStyle(0x88ccff, 0.9);
-    g.fillEllipse(cx - 14, BY - 84, 5, 9);
-    g.fillEllipse(cx + 14, BY - 84, 5, 9);
-    // Moustache
-    g.fillStyle(0x5a3010);
-    g.fillEllipse(cx - 8, BY - 80, 12, 6);
-    g.fillEllipse(cx + 8, BY - 80, 12, 6);
-    // Red shirt
-    g.fillStyle(0xdd2200);
-    g.fillRect(cx - 24, BY - 74, 48, 36);
-    // Blue overalls
-    g.fillStyle(0x1133cc);
-    g.fillRect(cx - 20, BY - 56, 40, 28);
-    // Straps
-    g.fillRect(cx - 10, BY - 74, 8, 20);
-    g.fillRect(cx + 2,  BY - 74, 8, 20);
-    // Arms
-    g.fillStyle(0xdd2200);
-    g.fillRect(cx - 40, BY - 72, 18, 28);
-    g.fillRect(cx + 22, BY - 72, 18, 28);
-    // White gloves
-    g.fillStyle(0xffffff);
-    g.fillCircle(cx - 32, BY - 46, 8);
-    g.fillCircle(cx + 32, BY - 46, 8);
-    // Legs
-    g.fillStyle(0x1133cc);
-    g.fillRect(cx - 18, BY - 28, 16, 28);
-    g.fillRect(cx + 2,  BY - 28, 16, 28);
-    // Shoes
-    g.fillStyle(0x5a3010);
-    g.fillRect(cx - 22, BY - 4, 22, 10);
-    g.fillRect(cx + 2,  BY - 4, 22, 10);
+    g.fillStyle(0x88ccff, 0.88);
+    g.fillEllipse(cx - 22, BY - 95, 6, 12);
+    g.fillEllipse(cx + 14, BY - 95, 6, 12);
   }
 
-  // ── "A clue!" popup (brief HUD overlay, auto-destroys) ──────────────────────
+  // ── "A/Another clue!" popup ──────────────────────────────────────────────────
 
-  private showSmg4CluePopup() {
+  private showSmg4CluePopup(text = "A clue!") {
     const D = 20;
     const objs: Phaser.GameObjects.GameObject[] = [];
     const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { objs.push(o); return o; };
 
-    // Small portrait box (bottom-left)
-    const bx = 20, by = 580, bw = 140, bh = 80;
+    const bx = 20, by = 570, bw = 190, bh = 88;
     const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
-    bg.fillStyle(0x0a0a1a, 0.92).fillRoundedRect(bx, by, bw, bh, 8);
+    bg.fillStyle(0x0a0a1a, 0.94).fillRoundedRect(bx, by, bw, bh, 8);
     bg.lineStyle(2, 0x4488ff, 0.8).strokeRoundedRect(bx, by, bw, bh, 8);
 
-    // Tiny SMG4 portrait
+    // SMG4 mini portrait (matches playable style)
     const pg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
-    this.drawCutsceneSmg4(pg, bx + 34, by + bh - 6, 0.55);
+    this.drawCutsceneSmg4(pg, bx + 36, by + bh - 2, 0.7);
 
-    // "A clue!" text
-    push(this.add.text(bx + bw - 8, by + bh / 2, "A clue!", {
+    push(this.add.text(bx + bw - 10, by + bh / 2, text, {
       fontSize: "20px", fontStyle: "bold italic",
       color: "#4488ff", stroke: "#000033", strokeThickness: 4,
     }).setScrollFactor(0).setDepth(D + 2).setOrigin(1, 0.5));
 
-    // Auto-destroy after 2.5 s
     this.time.delayedCall(2500, () => objs.forEach(o => o.destroy()));
   }
 
@@ -3363,12 +3507,9 @@ export class GameScene extends Phaser.Scene {
     if (!this.boopkinsGfx) return;
     const startX = W1_BRETURN_X + 500;
     const startY = W1_FL;
-    // Toilet center X ≈ W1_BRETURN_X + 38 + 28 = W1_BRETURN_X + 66
     const toiletX = W1_BRETURN_X + 66;
-    // Toilet seat top: W1_FL - 96
     const toiletY = W1_FL - 96;
 
-    // Hop to toilet
     this.tweens.add({
       targets: this.boopkinsGfx,
       x: toiletX - startX,
@@ -3376,7 +3517,6 @@ export class GameScene extends Phaser.Scene {
       duration: 600,
       ease: "Back.easeOut",
       onComplete: () => {
-        // Sinusoidal bob (singing)
         this.tweens.add({
           targets: this.boopkinsGfx,
           y: `+=${16}`,
@@ -3387,5 +3527,241 @@ export class GameScene extends Phaser.Scene {
         });
       },
     });
+  }
+
+  // ── Movie cutscene (Mr. Puzzles gives pipe bomb) ─────────────────────────────
+
+  private showMovieCutscene() {
+    const D = 25;
+    const W = 1280, H = 720;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { objs.push(o); return o; };
+
+    const dismiss = () => { objs.forEach(o => o.destroy()); };
+
+    // Dark room overlay
+    const dim = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    dim.fillStyle(0x000000, 0.9).fillRect(0, 0, W, H);
+
+    // TV / cinema screen (center)
+    const tvX = W / 2, tvY = 260, tvW = 480, tvH = 280;
+    const tvG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    tvG.fillStyle(0x111111); tvG.fillRect(tvX - tvW/2 - 16, tvY - tvH/2 - 16, tvW + 32, tvH + 32);
+    // Movie screen (colorful Mario Movie scene)
+    tvG.fillStyle(0x44aaff); tvG.fillRect(tvX - tvW/2, tvY - tvH/2, tvW, tvH);
+    tvG.fillStyle(0x228822); tvG.fillRect(tvX - tvW/2, tvY + tvH/2 - 60, tvW, 60);
+    tvG.fillStyle(0xffcc22); tvG.fillEllipse(tvX - tvW/2 + 80, tvY, 60, 60);  // sun
+    tvG.fillStyle(0xffffff); tvG.fillEllipse(tvX - 60, tvY - 30, 80, 40);
+    tvG.fillStyle(0xffffff); tvG.fillEllipse(tvX + 80, tvY - 50, 100, 45);
+    tvG.fillStyle(0xdd2200); tvG.fillEllipse(tvX, tvY + tvH/2 - 45, 30, 36); // Mario tiny
+
+    // "Now Playing" text on screen
+    push(this.add.text(tvX, tvY - tvH/2 + 14, "★  THE SUPER MARIO BROS. MOVIE  ★\nBONUS FEATURES EDITION", {
+      fontSize: "14px", color: "#ffdd44", fontStyle: "bold", align: "center",
+      stroke: "#000000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 2).setOrigin(0.5, 0));
+
+    // Two silhouettes watching (player + Mario movie style)
+    const seatY = H - 100;
+    const sG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    // Left chair silhouette (player character)
+    sG.fillStyle(0x111111);
+    sG.fillEllipse(W/2 - 100, seatY - 40, 36, 40);  // head
+    sG.fillRect(W/2 - 118, seatY - 20, 36, 50);      // body
+    // Right chair silhouette (Movie Mario — big head + mustache)
+    sG.fillStyle(0x222222);
+    sG.fillEllipse(W/2 + 100, seatY - 44, 52, 52);   // big round head
+    sG.fillRect(W/2 + 100 - 22, seatY - 64, 50, 10); // cap brim
+    sG.fillEllipse(W/2 + 100, seatY - 66, 44, 22);   // cap dome
+    sG.fillEllipse(W/2 + 90,  seatY - 28, 32, 14);   // mustache l
+    sG.fillEllipse(W/2 + 112, seatY - 28, 32, 14);   // mustache r
+    sG.fillRect(W/2 + 78,  seatY - 20, 44, 50);      // body
+    // Simple red chairs behind them
+    sG.fillStyle(0x550000);
+    sG.fillRect(W/2 - 128, seatY - 10, 56, 40);
+    sG.fillRect(W/2 + 72,  seatY - 10, 56, 40);
+
+    push(this.add.text(W/2, H - 40, "Enjoying the movie...", {
+      fontSize: "18px", color: "#aaaaaa", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 2).setOrigin(0.5, 1));
+
+    // After 3.5 s, show Mr. Puzzles giving pipe bomb
+    this.time.delayedCall(3500, () => {
+      dismiss();
+      this.showDialogue(
+        "Mr. Puzzles: For watching the Mario Movie with\nbonus features, you get… A PIPE BOMB",
+        "#111111", 4500
+      );
+      // Make dialogue bg bright yellow so black text is readable
+      if (this.dialogueBg) {
+        this.dialogueBg.clear();
+        const tw2 = (this.dialogueText?.width ?? 200) + 24;
+        const th2 = (this.dialogueText?.height ?? 40) + 14;
+        this.dialogueBg.fillStyle(0xffee22, 1).fillRoundedRect(640 - tw2/2, 620 - th2, tw2, th2, 6);
+        this.dialogueBg.lineStyle(2, 0x000000, 0.6).strokeRoundedRect(640 - tw2/2, 620 - th2, tw2, th2, 6);
+      }
+      this.time.delayedCall(4800, () => {
+        this.hasPipeBomb = true;
+        this.showDialogue("You received the PIPE BOMB!\nPress X to open inventory.", "#ffdd00", 3500);
+      });
+    });
+  }
+
+  // ── Inventory (pipe bomb) ────────────────────────────────────────────────────
+
+  private openInventory() {
+    if (this.inventoryOpen) return;
+    this.inventoryOpen = true;
+    const D = 28;
+    const W = 1280, H = 720;
+    const iW = 340, iH = 200, ix = W/2 - iW/2, iy = H/2 - iH/2;
+
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.inventoryObjs.push(o); return o;
+    };
+
+    // Panel bg
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x0a0a1a, 0.97).fillRoundedRect(ix, iy, iW, iH, 12);
+    bg.lineStyle(2, 0xffdd44, 0.8).strokeRoundedRect(ix, iy, iW, iH, 12);
+
+    push(this.add.text(W/2, iy + 18, "🎒  INVENTORY", {
+      fontSize: "18px", fontStyle: "bold", color: "#ffdd44", stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    // Pipe bomb icon (small drawn representation)
+    const ibG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    const ibx = ix + 24, iby = iy + 52;
+    ibG.fillStyle(0x333333); ibG.fillRoundedRect(ibx, iby, 26, 38, 4);
+    ibG.fillStyle(0xaaaaaa); ibG.fillRect(ibx + 4, iby - 8, 8, 10);
+    ibG.fillStyle(0xffaa00); ibG.fillRect(ibx + 8, iby - 20, 4, 14);
+    ibG.lineStyle(2, 0x666666, 1); ibG.strokeRoundedRect(ibx, iby, 26, 38, 4);
+
+    push(this.add.text(ix + 64, iy + 60, "Pipe Bomb  x1", {
+      fontSize: "16px", color: "#ffffff", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 1));
+
+    push(this.add.text(ix + 64, iy + 80, "Throw at a singing target.", {
+      fontSize: "11px", color: "#888888",
+    }).setScrollFactor(0).setDepth(D + 1));
+
+    // Use button
+    const useBtn = push(this.add.text(W/2, iy + iH - 40, "[ 💣  Use on Boopkins ]", {
+      fontSize: "16px", fontStyle: "bold", color: "#ff6644",
+      stroke: "#330000", strokeThickness: 3,
+      backgroundColor: "#1a0000", padding: { x: 14, y: 8 },
+    }).setScrollFactor(0).setDepth(D + 2).setInteractive({ useHandCursor: true }).setOrigin(0.5));
+
+    useBtn.on("pointerover", () => useBtn.setColor("#ff9966"));
+    useBtn.on("pointerout",  () => useBtn.setColor("#ff6644"));
+    useBtn.on("pointerdown", () => {
+      const px = this.player.x;
+      const inBathroom = px >= W1_B_LEFT && px < W1_B_RIGHT;
+      if (!inBathroom || !this.boopkinsGreeted) {
+        this.closeInventory();
+        this.showDialogue("You need to be in the bathroom near Boopkins!", "#ff8844", 2500);
+        return;
+      }
+      this.closeInventory();
+      this.explodeBoopkins();
+    });
+
+    // Close button
+    const closeBtn = push(this.add.text(ix + iW - 8, iy + 8, "✕", {
+      fontSize: "18px", color: "#888888", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 2).setInteractive({ useHandCursor: true }).setOrigin(1, 0));
+    closeBtn.on("pointerover", () => closeBtn.setColor("#ffffff"));
+    closeBtn.on("pointerout",  () => closeBtn.setColor("#888888"));
+    closeBtn.on("pointerdown", () => this.closeInventory());
+
+    push(this.add.text(W/2, iy + iH - 12, "X  to close", {
+      fontSize: "11px", color: "#555555",
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 1));
+  }
+
+  private closeInventory() {
+    this.inventoryOpen = false;
+    this.inventoryObjs.forEach(o => o.destroy());
+    this.inventoryObjs = [];
+  }
+
+  // ── Boopkins explosion + pipe reveal ────────────────────────────────────────
+
+  private explodeBoopkins() {
+    this.hasPipeBomb = false;
+    this.pipeBombUsed = true;
+
+    // Stop any singing tweens
+    if (this.boopkinsGfx) this.tweens.killTweensOf(this.boopkinsGfx);
+
+    // Brief flash
+    const flash = this.add.graphics().setScrollFactor(0).setDepth(35);
+    flash.fillStyle(0xffffff, 0.8).fillRect(0, 0, 1280, 720);
+    this.time.delayedCall(80, () => flash.destroy());
+
+    // Hide Boopkins, reveal pipe
+    this.time.delayedCall(100, () => {
+      this.boopkinsGfx?.setVisible(false);
+      this.pipeRevealGfx?.setVisible(true);
+      this.showDialogue("BOOM! Boopkins is gone! Inspect the pipe with Z.", "#ffaa22", 3500);
+    });
+  }
+
+  // ── Phone log overlay (clue list) ───────────────────────────────────────────
+
+  private togglePhoneLog() {
+    if (this.phoneLogOpen) this.closePhoneLog();
+    else this.openPhoneLog();
+  }
+
+  private openPhoneLog() {
+    if (this.phoneLogOpen) return;
+    this.phoneLogOpen = true;
+    const D = 28;
+    const lW = 360, lH = 60 + Math.max(1, this.phoneLog.length) * 32 + 40;
+    const lx = 10, ly = 70;
+
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.phoneLogObjs.push(o); return o;
+    };
+
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x0a0a1a, 0.97).fillRoundedRect(lx, ly, lW, lH, 10);
+    bg.lineStyle(2, 0x3388ff, 0.8).strokeRoundedRect(lx, ly, lW, lH, 10);
+
+    push(this.add.text(lx + lW/2, ly + 16, "📱 CLUE LOG", {
+      fontSize: "16px", fontStyle: "bold", color: "#88ccff", stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    if (this.phoneLog.length === 0) {
+      push(this.add.text(lx + 16, ly + 50, "No clues yet...", {
+        fontSize: "13px", color: "#666666",
+      }).setScrollFactor(0).setDepth(D + 1));
+    } else {
+      this.phoneLog.forEach((entry, i) => {
+        push(this.add.text(lx + 16, ly + 50 + i * 32, `• ${entry}`, {
+          fontSize: "13px", color: "#ffffff", stroke: "#000", strokeThickness: 2,
+          wordWrap: { width: lW - 32 },
+        }).setScrollFactor(0).setDepth(D + 1));
+      });
+    }
+
+    const closeBtn = push(this.add.text(lx + lW - 8, ly + 8, "✕", {
+      fontSize: "16px", color: "#666666",
+    }).setScrollFactor(0).setDepth(D + 2).setInteractive({ useHandCursor: true }).setOrigin(1, 0));
+    closeBtn.on("pointerover", () => closeBtn.setColor("#ffffff"));
+    closeBtn.on("pointerout",  () => closeBtn.setColor("#666666"));
+    closeBtn.on("pointerdown", () => this.closePhoneLog());
+
+    // Also show X key hint only if not shown in unused space
+    push(this.add.text(lx + lW - 8, ly + lH - 10, "click phone to close", {
+      fontSize: "10px", color: "#333333",
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(1, 1));
+  }
+
+  private closePhoneLog() {
+    this.phoneLogOpen = false;
+    this.phoneLogObjs.forEach(o => o.destroy());
+    this.phoneLogObjs = [];
   }
 }
