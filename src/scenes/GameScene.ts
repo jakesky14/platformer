@@ -44,7 +44,7 @@ const LEVEL_H    = 720;
 const GROUND_TOP = LEVEL_H - 40;
 
 // ── World 1 (Mario's Mysteries house) extended layout ─────────────────────────
-const W1_TOTAL_W   = 5600;          // physics + camera bound
+const W1_TOTAL_W   = 7800;          // physics + camera bound (extended for war zone)
 const W1_CEIL      = 100;
 const W1_FL        = GROUND_TOP;    // 680
 // main floor door x-positions
@@ -71,6 +71,15 @@ const W1_BROOM_SPAWN_X  = 4700;     // spawn x when entering bedroom
 const W1_BROOM_BACK_X   = 1530;     // main-floor x after leaving bedroom (just past door)
 // house interior rooms
 const W1_BEDROOM_X = 1480;          // bedroom door x — past red chair right edge (1409)
+// war painting sub-zone (x=6000..7800) — entered via painting in bedroom
+const W1_WAR_LEFT    = 6000;
+const W1_WAR_RIGHT   = 7800;
+const W1_WAR_RETURN_X = 6025;       // exit door inside war zone
+const W1_WAR_SPAWN_X  = 6120;       // spawn x when entering war zone
+const W1_WAR_BACK_X   = 4720;       // bedroom x to return to (painting center)
+// painting position in bedroom (lowered for accessibility)
+const W1_WP_CX = 4720;             // painting center x
+const W1_WP_TY = GROUND_TOP - 210; // painting top y (470)
 
 const GOOMBA_XS: number[] = [];
 const KOOPA_XS:  number[] = [];
@@ -188,6 +197,22 @@ export class GameScene extends Phaser.Scene {
   private cutsceneDone   = false;
   private cutsceneStep   = 0;
   private cutsceneObjs:  Phaser.GameObjects.GameObject[] = [];
+  // War zone state
+  private warEntered        = false;
+  private warCutsceneDone   = false;
+  private chrisAlive        = true;
+  private swagAlive         = true;
+  private warSectionDone    = false;
+  private holdingGun        = false;
+  private chrisGfx:         Phaser.GameObjects.Graphics | null = null;
+  private swagGfx:          Phaser.GameObjects.Graphics | null = null;
+  private gunPickupGfx:     Phaser.GameObjects.Graphics | null = null;
+  private warBullets:       Phaser.Physics.Arcade.Group | null = null;
+  private warClueGfx:       Phaser.GameObjects.Graphics | null = null;
+  private warClueZLabel:    Phaser.GameObjects.Text     | null = null;
+  private paintingSmokeTweens: Phaser.Tweens.Tween[] = [];
+  private playerBullet:     Phaser.Physics.Arcade.Sprite | null = null;
+  private boopkinsRespawned = false;
   // Mr. Puzzles + inventory + pipe
   private hasPipeBomb      = false;
   private mrPuzzlesGreeted = false;
@@ -245,17 +270,24 @@ export class GameScene extends Phaser.Scene {
     this.returnTVGroup   = null;
     // World 9 mystery state persists between room warps within worldId=9
     if (this.worldId !== 9) {
-      this.hasPhone         = false;
-      this.holdingMallet    = false;
-      this.tomatoSmashed    = false;
-      this.meatballActive   = false;
-      this.bathroomUnlocked = false;
-      this.bedroomUnlocked  = false;
-      this.luigiGreeted     = false;
-      this.hasPipeBomb      = false;
-      this.mrPuzzlesGreeted = false;
-      this.pipeBombUsed     = false;
-      this.phoneLog         = [];
+      this.hasPhone          = false;
+      this.holdingMallet     = false;
+      this.tomatoSmashed     = false;
+      this.meatballActive    = false;
+      this.bathroomUnlocked  = false;
+      this.bedroomUnlocked   = false;
+      this.luigiGreeted      = false;
+      this.hasPipeBomb       = false;
+      this.mrPuzzlesGreeted  = false;
+      this.pipeBombUsed      = false;
+      this.boopkinsRespawned = false;
+      this.cutsceneDone      = false;
+      this.warEntered      = false;
+      this.warCutsceneDone = false;
+      this.chrisAlive      = true;
+      this.swagAlive       = true;
+      this.warSectionDone  = false;
+      this.phoneLog        = [];
     }
     this.phoneIconObj        = null;
     this.kitchenSmashOverlay = null;
@@ -268,7 +300,6 @@ export class GameScene extends Phaser.Scene {
     this.boopkinsGfx         = null;
     this.boopkinsGreeted     = false;
     this.cutsceneActive      = false;
-    this.cutsceneDone        = false;
     this.cutsceneStep        = 0;
     this.cutsceneObjs        = [];
     this.inventoryOpen       = false;
@@ -278,6 +309,15 @@ export class GameScene extends Phaser.Scene {
     this.pipeZLabel          = null;
     this.phoneLogOpen        = false;
     this.phoneLogObjs        = [];
+    this.holdingGun    = false;
+    this.chrisGfx      = null;
+    this.swagGfx       = null;
+    this.gunPickupGfx  = null;
+    this.warBullets = null;
+    this.warClueGfx          = null;
+    this.warClueZLabel       = null;
+    this.paintingSmokeTweens = [];
+    this.playerBullet        = null;
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
@@ -302,7 +342,11 @@ export class GameScene extends Phaser.Scene {
     this.setupInput();
     this.setupCamera();
     this.buildHUD();
-    if (this.worldId === 9) this.buildHouseCutscene();
+    if (this.worldId === 9) {
+      this.buildHouseCutscene();
+      this.startPaintingSmoke();
+      this.setupWarZone();
+    }
   }
 
   // ── Canvas-based texture generation (reliable in create()) ──────────────────
@@ -1320,7 +1364,33 @@ export class GameScene extends Phaser.Scene {
           this.addClue("A pipe — the spaghetti was hidden inside!");
           this.showDialogue("Clue logged to phone:\n\"A pipe\"", "#88ff88", 4000);
           this.bedroomUnlocked = true;
+          this.mrPuzzlesGfx?.setVisible(false);
           this.time.delayedCall(800, () => this.showSmg4CluePopup("Another clue!"));
+        }
+      }
+
+      // Grab gun in war zone
+      else if (this.warEntered && !this.holdingGun && !this.warSectionDone) {
+        const GX = W1_WAR_LEFT + 1400;
+        if (this.gunPickupGfx?.visible && Math.abs(px - GX) < 50) {
+          this.holdingGun = true;
+          this.gunPickupGfx.setVisible(false);
+          const gunLabel = this.children.getByName("gun-label") as Phaser.GameObjects.Text | null;
+          gunLabel?.setVisible(false);
+          this.showDialogue("You grabbed a gun!\nPress SHIFT to shoot.", "#ffcc44", 3000);
+        }
+      }
+
+      // Inspect spaghetti war clue after defeating Chris and Swagmaster
+      else if (this.warEntered && this.warClueGfx?.visible) {
+        const CLX = W1_WAR_LEFT + 1550;
+        if (Math.abs(px - CLX) < 60) {
+          this.warClueGfx.setVisible(false);
+          this.warClueZLabel?.setVisible(false);
+          this.warSectionDone = true;
+          this.addClue("Spaghetti — it was hidden inside the war painting!");
+          this.showDialogue("Clue logged to phone:\n\"Spaghetti in the painting\"", "#ffcc44", 4000);
+          this.time.delayedCall(800, () => this.showSmg4CluePopup("THE FINAL CLUE!"));
         }
       }
     }
@@ -1336,6 +1406,50 @@ export class GameScene extends Phaser.Scene {
         this.kitchenSmashOverlay?.setVisible(true);
         this.showDialogue("SMASH! Tomatoes crushed into sauce!\nInspect the meatball with Z.", "#ff4400", 3500);
         this.time.delayedCall(800, () => this.showSmg4CluePopup());
+      }
+    }
+
+    // ── World 9 war zone: SHIFT to shoot ──────────────────────────────────────
+    if (this.worldId === 9 && this.holdingGun && this.warEntered &&
+        Phaser.Input.Keyboard.JustDown(this.keyShift)) {
+      this.firePlayerBullet();
+    }
+
+    // ── World 9 war zone: player bullet hits Chris/Swag ────────────────────────
+    if (this.worldId === 9 && this.warEntered && this.playerBullet?.active) {
+      const pb = this.playerBullet;
+      if (this.chrisAlive && Math.abs(pb.x - (W1_WAR_LEFT + 1050)) < 35 &&
+          Math.abs(pb.y - (W1_FL - 42)) < 42) {
+        this.chrisAlive = false;
+        pb.destroy();
+        this.playerBullet = null;
+        this.chrisGfx?.setVisible(false);
+        this.showDialogue("Chris is down!", "#ffcc44", 2000);
+      } else if (this.swagAlive && Math.abs(pb.x - (W1_WAR_LEFT + 1250)) < 35 &&
+          Math.abs(pb.y - (W1_FL - 42)) < 42) {
+        this.swagAlive = false;
+        pb.destroy();
+        this.playerBullet = null;
+        this.swagGfx?.setVisible(false);
+        this.showDialogue("Swagmaster is down!", "#ffcc44", 2000);
+      }
+      // Reveal spaghetti clue when both defeated
+      if (!this.chrisAlive && !this.swagAlive && !this.warSectionDone &&
+          !this.warClueGfx?.visible) {
+        this.warClueGfx?.setVisible(true);
+        this.showDialogue("Both enemies defeated!\nSomething glowing appeared ahead...", "#88ff88", 3000);
+      }
+    }
+
+    // ── Boopkins respawn beside toilet after pipe bomb ─────────────────────────
+    if (this.worldId === 9 && this.pipeBombUsed && !this.boopkinsRespawned) {
+      const px = this.player.x;
+      if (px >= W1_B_LEFT && px < W1_B_RIGHT && this.boopkinsGfx) {
+        this.boopkinsRespawned = true;
+        this.tweens.killTweensOf(this.boopkinsGfx);
+        this.boopkinsGfx.setPosition(0, 0);
+        this.drawBoopkins(this.boopkinsGfx, W1_BRETURN_X + 130, W1_FL);
+        this.boopkinsGfx.setVisible(true);
       }
     }
 
@@ -1448,6 +1562,7 @@ export class GameScene extends Phaser.Scene {
             { dx: W1_KRETURN_X,      destX: W1_KBACK_X,       destY: W1_FL - 50 },
             { dx: W1_BRETURN_X,      destX: W1_BBACK_X,       destY: W1_FL - 50 },
             { dx: W1_BROOM_RETURN_X, destX: W1_BROOM_BACK_X,  destY: W1_FL - 50 },
+            { dx: W1_WAR_RETURN_X,   destX: W1_WAR_BACK_X,    destY: W1_FL - 50 },
           ];
           for (const door of doors) {
             if (nearFloor && Math.abs(px - door.dx) < 36) {
@@ -1464,11 +1579,32 @@ export class GameScene extends Phaser.Scene {
                   if (dx >= W1_K_LEFT && dx < W1_K_RIGHT)              { bL = W1_K_LEFT;     bW = W1_K_RIGHT - W1_K_LEFT; }
                   else if (dx >= W1_B_LEFT && dx < W1_B_RIGHT)         { bL = W1_B_LEFT;     bW = W1_B_RIGHT - W1_B_LEFT; }
                   else if (dx >= W1_BROOM_LEFT && dx < W1_BROOM_RIGHT) { bL = W1_BROOM_LEFT; bW = W1_BROOM_RIGHT - W1_BROOM_LEFT; }
+                  else if (dx >= W1_WAR_LEFT && dx < W1_WAR_RIGHT)     { bL = W1_WAR_LEFT;   bW = W1_WAR_RIGHT - W1_WAR_LEFT; }
                   this.cameras.main.setBounds(bL, 0, bW, LEVEL_H);
                   this.cameras.main.centerOn(door.destX, door.destY);
                 }
               }
               break;
+            }
+          }
+        }
+        // World 9 — war painting warp (↓ in midair near painting → enter war zone)
+        if (this.worldId === 9 && !promptVisible) {
+          const px = this.player.x, py = this.player.y;
+          const inBedroom = px >= W1_BROOM_LEFT && px < W1_BROOM_RIGHT;
+          const inAirNow  = !(this.player.body as Phaser.Physics.Arcade.Body).blocked.down;
+          if (inBedroom && inAirNow && !this.warEntered &&
+              Math.abs(px - W1_WP_CX) < 80 && py > W1_WP_TY - 60 && py < W1_FL - 60) {
+            if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+              this.warEntered = true;
+              this.player.setPosition(W1_WAR_SPAWN_X, W1_FL - 50);
+              (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+              this.cameras.main.setBounds(W1_WAR_LEFT, 0, W1_WAR_RIGHT - W1_WAR_LEFT, LEVEL_H);
+              this.cameras.main.centerOn(W1_WAR_SPAWN_X, W1_FL);
+              if (!this.warCutsceneDone) {
+                this.warCutsceneDone = true;
+                this.showDialogue("SMG4: Mario, look we are in the middle of a war!", "#4488ff", 4500);
+              }
             }
           }
         }
@@ -1504,6 +1640,10 @@ export class GameScene extends Phaser.Scene {
       if (this.pipeZLabel && this.pipeRevealGfx?.visible) {
         const pipeX = W1_BRETURN_X + 66;
         this.pipeZLabel.setVisible(Math.abs(px - pipeX) < 65);
+      }
+      if (this.warClueZLabel && this.warClueGfx?.visible) {
+        const CLX = W1_WAR_LEFT + 1550;
+        this.warClueZLabel.setVisible(this.warEntered && Math.abs(px - CLX) < 60);
       }
     }
 
@@ -2552,29 +2692,37 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xddaaff); g.fillRect(BREX - 26, FL - 116, 52, 12);
         this.add.text(BREX, FL - 113, "EXIT", { fontSize: "9px", color: "#551188", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
 
-        // ── WAR SCENE PAINTING (left wall) ───────────────────────────────────
+        // ── WAR SCENE PAINTING (lowered for accessibility, uses global constants) ─
         {
-          const WPX = BRX + 80, WPY = FL - 380;
-          g.fillStyle(0x3a1a0a); g.fillRect(WPX, WPY, 80, 100);
-          g.fillStyle(0x1a1a2e); g.fillRect(WPX + 5, WPY + 5, 70, 90);
-          g.fillStyle(0x4a3820); g.fillRect(WPX + 5, WPY + 76, 70, 19);
+          const WPX = W1_WP_CX - 50, WPY = W1_WP_TY;  // 4670, 470
+          // Frame
+          g.fillStyle(0x3a1a0a); g.fillRect(WPX - 6, WPY - 6, 112, 112);
+          // Canvas
+          g.fillStyle(0x1a1a2e); g.fillRect(WPX, WPY, 100, 100);
+          // Ground (brown)
+          g.fillStyle(0x4a3820); g.fillRect(WPX, WPY + 78, 100, 22);
+          // Soldiers (silhouettes)
           g.fillStyle(0x111111);
-          g.fillRect(WPX + 12, WPY + 64, 4, 12); g.fillCircle(WPX + 14, WPY + 61, 3.5);
-          g.fillRect(WPX + 14, WPY + 67, 14, 2);
-          g.fillRect(WPX + 32, WPY + 62, 4, 14); g.fillCircle(WPX + 34, WPY + 59, 3.5);
-          g.fillRect(WPX + 34, WPY + 65, 12, 2);
-          g.fillRect(WPX + 50, WPY + 64, 4, 12); g.fillCircle(WPX + 52, WPY + 61, 3.5);
-          g.fillRect(WPX + 50, WPY + 66, 11, 2);
-          g.fillStyle(0x2a2a2a); g.fillRect(WPX + 56, WPY + 70, 16, 8);
-          g.fillStyle(0xff6600, 0.8); g.fillCircle(WPX + 62, WPY + 20, 14);
-          g.fillStyle(0xffaa22, 0.6); g.fillCircle(WPX + 66, WPY + 14, 9);
-          g.fillStyle(0xffff00, 0.5); g.fillCircle(WPX + 60, WPY + 18, 5);
+          g.fillRect(WPX + 10, WPY + 60, 5, 18); g.fillCircle(WPX + 12, WPY + 58, 5);
+          g.fillRect(WPX + 12, WPY + 70, 16, 2);
+          g.fillRect(WPX + 32, WPY + 58, 5, 20); g.fillCircle(WPX + 34, WPY + 55, 5);
+          g.fillRect(WPX + 34, WPY + 68, 14, 2);
+          g.fillRect(WPX + 58, WPY + 60, 5, 18); g.fillCircle(WPX + 60, WPY + 57, 5);
+          g.fillRect(WPX + 55, WPY + 68, 13, 2);
+          // Burning building
+          g.fillStyle(0x2a2a2a); g.fillRect(WPX + 66, WPY + 64, 24, 14);
+          // Fire
+          g.fillStyle(0xff6600, 0.85); g.fillCircle(WPX + 74, WPY + 22, 16);
+          g.fillStyle(0xffaa22, 0.65); g.fillCircle(WPX + 80, WPY + 15, 11);
+          g.fillStyle(0xffff00, 0.5); g.fillCircle(WPX + 72, WPY + 18, 6);
+          // Stars
           g.fillStyle(0xffffff, 0.7);
-          const bstars: [number,number][] = [[14,10],[32,8],[52,14],[22,18],[45,11]];
-          for (const [sx,sy] of bstars) g.fillCircle(WPX + sx, WPY + sy, 1.5);
+          for (const [sx,sy] of [[12,10],[34,8],[56,14],[22,22],[48,11]] as [number,number][])
+            g.fillCircle(WPX + sx, WPY + sy, 1.5);
+          // Corner nails
           g.fillStyle(0x9b6a2a);
-          g.fillCircle(WPX, WPY, 4); g.fillCircle(WPX + 80, WPY, 4);
-          g.fillCircle(WPX, WPY + 100, 4); g.fillCircle(WPX + 80, WPY + 100, 4);
+          for (const [cx2,cy2] of [[-6,-6],[106,-6],[-6,106],[106,106]] as [number,number][])
+            g.fillCircle(WPX + cx2, WPY + cy2, 5);
         }
 
         // ── PURPLE WALL CURTAIN DRAPE ─────────────────────────────────────────
@@ -2642,6 +2790,148 @@ export class GameScene extends Phaser.Scene {
           g.fillRect(WX + WW - 1, WY - 5, 6, WH + 10);
           g.fillRect(WX + (WW / 2 | 0) - 2, WY, 4, WH);
           g.fillStyle(0xeeeeee); g.fillRect(WX - 8, WY + WH + 4, WW + 16, 8);
+        }
+      }
+
+      // ═══ WAR PAINTING SUB-ZONE (x=W1_WAR_LEFT..W1_WAR_RIGHT) ════════════════
+      {
+        const WLX = W1_WAR_LEFT, WRX = W1_WAR_RIGHT;
+        // Dark smoky orange-red war sky
+        g.fillStyle(0x1a0500); g.fillRect(WLX, CEIL, WRX - WLX, FL - CEIL);
+        // Smoke clouds
+        g.fillStyle(0x2a1000, 0.8);
+        for (const [cx2,cy2,cw,ch] of [[WLX+150,200,200,60],[WLX+450,160,250,70],[WLX+900,190,200,50],[WLX+1200,170,280,65],[WLX+1500,200,220,60]] as [number,number,number,number][])
+          g.fillEllipse(cx2, cy2, cw, ch);
+        // Orange fire glow on horizon
+        g.fillStyle(0xff5500, 0.22); g.fillRect(WLX, FL - 260, WRX - WLX, 260);
+        g.fillStyle(0xff2200, 0.12); g.fillRect(WLX, FL - 400, WRX - WLX, 180);
+        // Damaged ground (dark, cracked)
+        g.fillStyle(0x1a1000); g.fillRect(WLX, FL, WRX - WLX, LEVEL_H - FL);
+        g.fillStyle(0x2a1800); g.fillRect(WLX, FL - 6, WRX - WLX, 6);
+        // Ceiling
+        g.fillStyle(0x0a0500); g.fillRect(WLX, CEIL, WRX - WLX, 14);
+
+        // Return exit door (left wall)
+        const WLEX = W1_WAR_RETURN_X;
+        g.fillStyle(0x8b5e1a);
+        g.fillRect(WLEX - 30, FL - 96, 8, 96); g.fillRect(WLEX + 22, FL - 96, 8, 96);
+        g.fillRect(WLEX - 30, FL - 96, 60, 10);
+        g.fillStyle(0x443311); g.fillRect(WLEX - 22, FL - 86, 44, 86);
+        g.fillStyle(0x221100); g.fillRect(WLEX - 22, FL - 86, 6, 86);
+        g.fillStyle(0x665533);
+        g.fillRect(WLEX - 14, FL - 80, 28, 32); g.fillRect(WLEX - 14, FL - 44, 28, 28);
+        g.fillStyle(0xddaa22); g.fillCircle(WLEX + 12, FL - 48, 4);
+        this.add.text(WLEX, FL - 113, "EXIT", { fontSize: "9px", color: "#aa8855", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
+
+        // ── RUINED BUILDING 1 (x=6230..6400) ──────────────────────────────────
+        {
+          const B1X = WLX + 230;
+          // Main body
+          g.fillStyle(0x888880); g.fillRect(B1X, FL - 300, 170, 300);
+          g.fillStyle(0x777770); g.fillRect(B1X, FL - 300, 30, 300);
+          g.fillStyle(0x999988); g.fillRect(B1X + 30, FL - 300, 140, 300);
+          // Broken top edge (jagged)
+          g.fillStyle(0x1a0500); // sky colour to "cut out" top
+          g.fillTriangle(B1X + 40, FL - 300, B1X + 70, FL - 340, B1X + 100, FL - 300);
+          g.fillTriangle(B1X + 90, FL - 300, B1X + 130, FL - 320, B1X + 160, FL - 300);
+          // Blown-out windows (dark holes)
+          g.fillStyle(0x110800);
+          g.fillRect(B1X + 40, FL - 260, 30, 28); g.fillRect(B1X + 90, FL - 260, 30, 28);
+          g.fillRect(B1X + 40, FL - 210, 30, 28); g.fillRect(B1X + 90, FL - 210, 30, 28);
+          // Fire in one window
+          g.fillStyle(0xff4400, 0.7); g.fillCircle(B1X + 105, FL - 246, 10);
+          g.fillStyle(0xffaa00, 0.5); g.fillCircle(B1X + 108, FL - 250, 6);
+          // Rubble pile at base
+          g.fillStyle(0x666660);
+          g.fillEllipse(B1X + 20, FL, 80, 28); g.fillEllipse(B1X + 120, FL, 60, 22);
+        }
+
+        // ── RIVER GAP (x=6550..6700) ───────────────────────────────────────────
+        {
+          const RX = WLX + 550, RW = 150;
+          // Water (dark blue)
+          g.fillStyle(0x001830); g.fillRect(RX, FL, RW, LEVEL_H - FL);
+          g.fillStyle(0x002040); g.fillRect(RX, FL, RW, 8);
+          // Ripples
+          g.fillStyle(0x004468, 0.5);
+          for (let ri = 0; ri < 4; ri++)
+            g.fillEllipse(RX + 18 + ri * 36, FL + 14, 28, 6);
+          // Cut away ground colour
+          g.fillStyle(0x1a0500); g.fillRect(RX, CEIL, RW, FL - CEIL);
+          // Broken bridge planks (floating platforms, drawn here; physics in buildWorldLevel)
+          g.fillStyle(0x5a3a1a);
+          g.fillRect(RX - 10, FL - 72, 54, 12); g.fillRect(RX - 8, FL - 70, 50, 8);
+          g.fillRect(RX + 60, FL - 100, 54, 12); g.fillRect(RX + 62, FL - 98, 50, 8);
+          g.fillRect(RX + 118, FL - 60, 54, 12); g.fillRect(RX + 120, FL - 58, 50, 8);
+          // Planks look damaged
+          g.fillStyle(0x3a2000); g.fillRect(RX + 16, FL - 70, 4, 8); g.fillRect(RX + 82, FL - 98, 4, 8);
+        }
+
+        // ── RUINED BUILDING 2 (x=6730..6900) ──────────────────────────────────
+        {
+          const B2X = WLX + 730;
+          g.fillStyle(0x7a7a70); g.fillRect(B2X, FL - 250, 170, 250);
+          g.fillStyle(0x6a6a60); g.fillRect(B2X, FL - 250, 28, 250);
+          g.fillStyle(0x8a8a80); g.fillRect(B2X + 28, FL - 250, 142, 250);
+          // Broken top
+          g.fillStyle(0x1a0500);
+          g.fillTriangle(B2X + 20, FL - 250, B2X + 60, FL - 290, B2X + 100, FL - 250);
+          g.fillTriangle(B2X + 110, FL - 250, B2X + 140, FL - 270, B2X + 170, FL - 250);
+          // Windows
+          g.fillStyle(0x110800);
+          g.fillRect(B2X + 35, FL - 220, 28, 26); g.fillRect(B2X + 85, FL - 220, 28, 26);
+          g.fillRect(B2X + 35, FL - 180, 28, 26); g.fillRect(B2X + 85, FL - 180, 28, 26);
+          g.fillStyle(0xff6600, 0.65); g.fillCircle(B2X + 50, FL - 206, 9);
+          g.fillStyle(0x666660);
+          g.fillEllipse(B2X + 30, FL, 70, 24); g.fillEllipse(B2X + 130, FL, 50, 18);
+        }
+
+        // ── CHRIS NPC (x=7050) ─────────────────────────────────────────────────
+        {
+          const CX = WLX + 1050, CY = FL;
+          this.chrisGfx = this.add.graphics().setDepth(3);
+          this.drawChrisNpc(this.chrisGfx, CX, CY);
+        }
+
+        // ── SWAGMASTER NPC (x=7250) ────────────────────────────────────────────
+        {
+          const SX = WLX + 1250, SY = FL;
+          this.swagGfx = this.add.graphics().setDepth(3);
+          this.drawSwagNpc(this.swagGfx, SX, SY);
+        }
+
+        // ── GUN PICKUP (x=7400) ────────────────────────────────────────────────
+        {
+          const GX = WLX + 1400, GY = FL;
+          this.gunPickupGfx = this.add.graphics().setDepth(3);
+          const gg = this.gunPickupGfx;
+          gg.fillStyle(0x444444); gg.fillRect(GX - 16, GY - 18, 32, 10);
+          gg.fillStyle(0x333333); gg.fillRect(GX + 10, GY - 18, 10, 16);
+          gg.fillStyle(0x222222); gg.fillRect(GX - 16, GY - 8, 6, 8);
+          gg.fillStyle(0x666666); gg.fillRect(GX - 14, GY - 16, 20, 6);
+          // Z label
+          this.add.text(GX, GY - 26, "Z  Grab Gun", {
+            fontSize: "9px", color: "#ffdd44", stroke: "#000", strokeThickness: 2,
+          }).setOrigin(0.5, 1).setDepth(4).setName("gun-label");
+        }
+
+        // ── WAR CLUE (hidden until both defeated) ─────────────────────────────
+        {
+          const CLX = WLX + 1550, CLY = FL;
+          this.warClueGfx = this.add.graphics().setDepth(3).setVisible(false);
+          const cg = this.warClueGfx;
+          // Glowing spaghetti strand
+          cg.lineStyle(4, 0xffcc44); cg.beginPath();
+          cg.moveTo(CLX - 18, CLY - 24);
+          cg.lineTo(CLX - 6, CLY - 40); cg.lineTo(CLX + 8, CLY - 28);
+          cg.lineTo(CLX + 20, CLY - 44); cg.strokePath();
+          cg.fillStyle(0xffcc44); cg.fillCircle(CLX, CLY - 36, 12);
+          cg.fillStyle(0xffee88); cg.fillCircle(CLX - 3, CLY - 39, 6);
+          cg.fillStyle(0xff4400, 0.6);
+          cg.fillCircle(CLX - 14, CLY - 30, 4); cg.fillCircle(CLX + 16, CLY - 36, 4);
+          this.warClueZLabel = this.add.text(CLX, CLY - 56, "Z", {
+            fontSize: "9px", color: "#ffffff", stroke: "#000", strokeThickness: 2,
+          }).setOrigin(0.5, 0).setDepth(4).setVisible(false);
         }
       }
 
@@ -2723,8 +3013,29 @@ export class GameScene extends Phaser.Scene {
       plat(W1_K_LEFT + 537, W1_FL - 122, 162);  // countertop (lowered)
       plat(W1_K_LEFT + 908, W1_FL - 276,  76);  // fridge top
       // Bedroom sub-room furniture
-      plat(W1_BROOM_LEFT + 279, W1_FL -  64,  54);   // violet table top (VTX+27, VTY-72 surface)
-      plat(W1_BROOM_LEFT + 390, W1_FL -  52, 116);   // purple bed surface (PBDX+60, PBDY-60)
+      plat(W1_BROOM_LEFT + 279, W1_FL -  64,  54);   // violet table top
+      plat(W1_BROOM_LEFT + 390, W1_FL -  52, 116);   // purple bed surface
+      plat(W1_WP_CX,            W1_WP_TY - 12, 100); // painting shelf (jump platform to reach painting)
+
+      // War zone floor tiles (skip river gap 6550-6700)
+      for (let wx = W1_WAR_LEFT; wx < W1_WAR_RIGHT; wx += 64) {
+        const rx = wx;
+        if (rx >= W1_WAR_LEFT + 550 && rx < W1_WAR_LEFT + 700) continue; // river gap
+        (this.platforms.create(wx + 32, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0);
+      }
+      // War zone boundary walls
+      wall(W1_WAR_LEFT);         // left edge (exit door side)
+      wall(W1_WAR_RIGHT - 12);   // right edge
+      // Building walls (block bullets — right face of each building)
+      wall(W1_WAR_LEFT + 230);   // Building 1 left face
+      wall(W1_WAR_LEFT + 400);   // Building 1 right face
+      wall(W1_WAR_LEFT + 730);   // Building 2 left face
+      wall(W1_WAR_LEFT + 900);   // Building 2 right face
+      // Broken bridge platforms over river gap
+      const RXB = W1_WAR_LEFT + 550;
+      plat(RXB + 17,  W1_FL - 72,  50); // plank 1
+      plat(RXB + 87,  W1_FL - 100, 50); // plank 2
+      plat(RXB + 145, W1_FL - 60,  50); // plank 3
 
       // Purple exit door warp zone at x=960
       this.returnTVGroup = this.physics.add.staticGroup();
@@ -2862,7 +3173,7 @@ export class GameScene extends Phaser.Scene {
     this.keyZ     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
     this.keyX     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.X);
     // Use event-driven flag so no keypress is ever missed between frames
-    this.keyShift.on("down", () => { if (!this.holdingMallet) this.dashPending = true; });
+    this.keyShift.on("down", () => { if (!this.holdingMallet && !this.holdingGun) this.dashPending = true; });
   }
 
   private setupCamera() {
@@ -3268,6 +3579,12 @@ export class GameScene extends Phaser.Scene {
     const marioG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
 
     const step = this.cutsceneStep;
+
+    // Red tint overlay: step 7 (MAYBE branch — SMG4 grabs gun, screen turns dark red)
+    if (step === 7) {
+      const redDim = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+      redDim.fillStyle(0x880000, 0.40).fillRect(0, 0, W, H);
+    }
 
     // Steps: 0=SMG4 intro, 1=Mario sad, 2=SMG4 asks, 3=Mario spaghetti,
     //        4=SMG4 asks help, 5/6 = choice buttons (handled separately)
@@ -3763,5 +4080,192 @@ export class GameScene extends Phaser.Scene {
     this.phoneLogOpen = false;
     this.phoneLogObjs.forEach(o => o.destroy());
     this.phoneLogObjs = [];
+  }
+
+  // ── War zone setup ───────────────────────────────────────────────────────────
+
+  private setupWarZone() {
+    // Enemy bullet group — overlap with player → take damage
+    this.warBullets = this.physics.add.group();
+    this.physics.add.overlap(this.player, this.warBullets, (_p, b) => {
+      const blt = b as Phaser.Physics.Arcade.Sprite;
+      if (!blt.active) return;
+      blt.destroy();
+      this.takeDamage();
+    });
+    // Enemy bullets also blocked by building walls
+    this.physics.add.collider(this.warBullets, this.platforms, (_b) => {
+      (_b as Phaser.Physics.Arcade.Sprite).destroy();
+    });
+
+    // Shooting cycle: 4 shots × 500ms (=2s), then 1s pause, repeat
+    const startBurst = () => {
+      let shots = 0;
+      this.time.addEvent({
+        delay: 500,
+        repeat: 3,
+        callback: () => {
+          if (!this.warEntered || this.warSectionDone) return;
+          this.spawnEnemyBullet();
+          shots++;
+          if (shots >= 4) {
+            // 1s break before next burst
+            this.time.delayedCall(1000, () => {
+              if (this.warEntered && !this.warSectionDone) startBurst();
+            });
+          }
+        },
+      });
+    };
+    startBurst();
+  }
+
+  private spawnEnemyBullet() {
+    if (!this.warBullets) return;
+    const spawnBullet = (sx: number) => {
+      const blt = this.physics.add.sprite(sx - 20, W1_FL - 42, "ground-tile");
+      blt.setDisplaySize(14, 6).setAlpha(0.01);
+      (blt.body as Phaser.Physics.Arcade.Body).setAllowGravity(false).setVelocityX(-340);
+      this.warBullets!.add(blt);
+      this.time.delayedCall(5000, () => { if (blt.active) blt.destroy(); });
+    };
+    if (this.chrisAlive) spawnBullet(W1_WAR_LEFT + 1050);
+    if (this.swagAlive)  spawnBullet(W1_WAR_LEFT + 1250);
+  }
+
+  private firePlayerBullet() {
+    if (this.playerBullet?.active) return;
+    const bx = this.player.x + 20;
+    const by = this.player.y - 14;
+    const blt = this.physics.add.sprite(bx, by, "ground-tile");
+    blt.setDisplaySize(14, 6).setAlpha(0.01);
+    (blt.body as Phaser.Physics.Arcade.Body).setAllowGravity(false).setVelocityX(500);
+    this.playerBullet = blt;
+    this.time.delayedCall(2500, () => {
+      if (blt.active) blt.destroy();
+      this.playerBullet = null;
+    });
+  }
+
+  // ── Painting smoke animation ─────────────────────────────────────────────────
+
+  private startPaintingSmoke() {
+    const numPuffs = 5;
+    for (let i = 0; i < numPuffs; i++) {
+      const sg = this.add.graphics().setDepth(4);
+      const offsetX = (i - 2) * 18;
+      const startY  = W1_WP_TY - 10;
+
+      sg.fillStyle(0x888888, 0.45 + i * 0.04);
+      sg.fillEllipse(W1_WP_CX + offsetX, startY, 14 + i * 2, 16 + i * 2);
+
+      const tween = this.tweens.add({
+        targets: sg,
+        y: `-=${30 + i * 10}`,
+        alpha: { from: 0.55, to: 0 },
+        duration: 1200 + i * 300,
+        ease: "Sine.easeOut",
+        delay: i * 220,
+        yoyo: false,
+        repeat: -1,
+        repeatDelay: 400,
+        onRepeat: () => {
+          sg.clear();
+          const grey = 0x888888 + (i % 3) * 0x111111;
+          sg.fillStyle(grey, 0.5);
+          sg.fillEllipse(W1_WP_CX + offsetX, startY, 12 + i * 2, 14 + i * 2);
+          sg.setPosition(0, 0);
+        },
+      });
+      this.paintingSmokeTweens.push(tween);
+    }
+  }
+
+  // ── Chris NPC sprite (war zone) ──────────────────────────────────────────────
+
+  private drawChrisNpc(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    const BY = baseY;
+    // Light blue military jumpsuit body
+    g.fillStyle(0xaaccee); g.fillRect(cx - 14, BY - 68, 28, 48);
+    // Suit highlights
+    g.fillStyle(0xbbd8f8); g.fillRect(cx - 12, BY - 66, 10, 44);
+    // Belt (dark)
+    g.fillStyle(0x334466); g.fillRect(cx - 14, BY - 30, 28, 6);
+    g.fillStyle(0x888800); g.fillRect(cx - 4, BY - 30, 8, 6); // belt buckle
+    // Gold wrist cuffs
+    g.fillStyle(0xddaa22);
+    g.fillRect(cx - 18, BY - 42, 6, 8); // left cuff
+    g.fillRect(cx + 12, BY - 42, 6, 8); // right cuff
+    // Arms (light blue sleeves)
+    g.fillStyle(0xaaccee);
+    g.fillRect(cx - 22, BY - 64, 10, 34); // left arm
+    g.fillRect(cx + 12, BY - 64, 10, 34); // right arm (gun side)
+    // Gun in right hand
+    g.fillStyle(0x333333); g.fillRect(cx + 22, BY - 52, 18, 8); // barrel
+    g.fillStyle(0x444444); g.fillRect(cx + 20, BY - 46, 10, 14); // grip
+    // Angular "photo-face" head (rectangular, flattened top)
+    g.fillStyle(0xffd0a0); g.fillRect(cx - 13, BY - 96, 26, 26);
+    // Angular jaw line
+    g.fillStyle(0xeec090);
+    g.fillRect(cx - 11, BY - 72, 22, 6); // chin
+    // Dark hair (flat top)
+    g.fillStyle(0x1a1200); g.fillRect(cx - 13, BY - 96, 26, 7);
+    // Eyes (angular, spaced)
+    g.fillStyle(0x1133aa);
+    g.fillRect(cx - 8, BY - 86, 5, 5);
+    g.fillRect(cx + 3, BY - 86, 5, 5);
+    // Eye whites
+    g.fillStyle(0xffffff);
+    g.fillRect(cx - 9, BY - 87, 3, 3); g.fillRect(cx + 4, BY - 87, 3, 3);
+    // Nose
+    g.fillStyle(0xcc9966); g.fillRect(cx - 2, BY - 80, 4, 5);
+    // Mouth line
+    g.fillStyle(0x994444); g.fillRect(cx - 5, BY - 74, 10, 2);
+    // Legs/boots
+    g.fillStyle(0x334466); g.fillRect(cx - 12, BY - 20, 10, 20); // left leg
+    g.fillRect(cx + 2, BY - 20, 10, 20);  // right leg
+    g.fillStyle(0x111111); g.fillRect(cx - 14, BY - 6, 12, 6); // boots
+    g.fillRect(cx + 2, BY - 6, 12, 6);
+  }
+
+  // ── Swagmaster NPC sprite (war zone) ─────────────────────────────────────────
+
+  private drawSwagNpc(g: Phaser.GameObjects.Graphics, sx: number, baseY: number) {
+    const BY = baseY;
+    // Light blue military uniform body
+    g.fillStyle(0x99bbdd); g.fillRect(sx - 14, BY - 66, 28, 46);
+    g.fillStyle(0xaaccee); g.fillRect(sx - 12, BY - 64, 10, 40);
+    // Red belt
+    g.fillStyle(0x883322); g.fillRect(sx - 14, BY - 28, 28, 7);
+    g.fillStyle(0xcc5544); g.fillRect(sx - 4, BY - 28, 8, 7); // buckle
+    // Arms (one raised — waving)
+    g.fillStyle(0x99bbdd);
+    g.fillRect(sx - 22, BY - 62, 10, 34); // left arm (hanging)
+    g.fillRect(sx + 12, BY - 68, 10, 18); // right arm (raised)
+    g.fillRect(sx + 16, BY - 80, 10, 14); // forearm going up
+    // Fist
+    g.fillStyle(0xffc888); g.fillRect(sx + 14, BY - 86, 12, 10);
+    // Face (slightly rounder than Chris)
+    g.fillStyle(0xffc888); g.fillRect(sx - 13, BY - 96, 26, 26);
+    // Dark wavy hair
+    g.fillStyle(0x1a0a00); g.fillRect(sx - 13, BY - 96, 26, 8);
+    g.fillStyle(0x2a1200);
+    g.fillRect(sx - 14, BY - 90, 4, 6); g.fillRect(sx + 10, BY - 90, 4, 6);
+    // Dark sunglasses (signature Swag look)
+    g.fillStyle(0x111111);
+    g.fillRect(sx - 10, BY - 86, 8, 6);
+    g.fillRect(sx + 2,  BY - 86, 8, 6);
+    g.fillStyle(0x333333); g.fillRect(sx - 2, BY - 85, 4, 4); // bridge
+    // Mustache (brown, thick)
+    g.fillStyle(0x4a2a10);
+    g.fillEllipse(sx - 5, BY - 77, 14, 6);
+    g.fillEllipse(sx + 5, BY - 77, 14, 6);
+    // Mouth (smirk)
+    g.fillStyle(0x883322); g.fillRect(sx - 4, BY - 73, 8, 2);
+    // Legs
+    g.fillStyle(0x334466); g.fillRect(sx - 12, BY - 20, 10, 20);
+    g.fillRect(sx + 2, BY - 20, 10, 20);
+    g.fillStyle(0x111111); g.fillRect(sx - 14, BY - 6, 12, 6);
+    g.fillRect(sx + 2, BY - 6, 12, 6);
   }
 }
