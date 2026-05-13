@@ -236,6 +236,8 @@ export class GameScene extends Phaser.Scene {
   private pipeInspected       = false;
   private mysteriesComplete   = false;
   private onceUponObjs: Phaser.GameObjects.GameObject[] = [];
+  private testingMode         = false;
+  private testBarObjs: Phaser.GameObjects.GameObject[] = [];
   // Mr. Puzzles + inventory + pipe
   private carrotsSmashed    = false;
   private cucumbersSmashed  = false;
@@ -370,6 +372,7 @@ export class GameScene extends Phaser.Scene {
     this.lastBarrageActive   = null;
     this.barrageFlashEvent   = null;
     this.onceUponObjs        = [];
+    this.testBarObjs         = [];
     this.boopkinsKeyGiven    = false;
     this.endingTriggered     = false;
     this.guessingActive      = false;
@@ -3583,6 +3586,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildHUD() {
     this.buildSettingsButton();
+    this.buildTestBar();
     this.warpPromptText = this.add.text(0, 0, "↓  Enter", {
       fontSize: "15px", color: "#ffffff",
       stroke: "#000000", strokeThickness: 3,
@@ -3640,7 +3644,7 @@ export class GameScene extends Phaser.Scene {
   private openSettings() {
     this.settingsOpen = true;
     const D = 50;
-    const W = 500, H = 430, cx = 640, cy = 360;
+    const W = 500, H = 510, cx = 640, cy = 360;
     const px = cx - W / 2, py = cy - H / 2;
 
     const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -3732,6 +3736,29 @@ export class GameScene extends Phaser.Scene {
       this.scene.start("CharacterSelectScene");
     });
 
+    // ── Testing Mode ──────────────────────────────────────────────────────────
+    div(py + 418);
+    const ty = py + 432;
+    txt(px + 22, ty, "TESTING MODE", { fontSize: "12px", color: "#cc8833", stroke: "#000", strokeThickness: 2 });
+    txt(px + 22, ty + 17, "Skip to any world instantly. Bypasses prerequisites.", {
+      fontSize: "11px", color: "#886622", stroke: "#000", strokeThickness: 2, wordWrap: { width: W - 44 },
+    });
+
+    const tOn = this.testingMode;
+    const tBtnG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    tBtnG.fillStyle(tOn ? 0x2a1a00 : 0x1a1a00, 1);
+    tBtnG.fillRoundedRect(cx - 110, ty + 50, 220, 38, 9);
+    tBtnG.lineStyle(2, tOn ? 0xcc8833 : 0x554422, 1);
+    tBtnG.strokeRoundedRect(cx - 110, ty + 50, 220, 38, 9);
+    const tBtnTxt = txt(cx, ty + 69, tOn ? "✓  Testing Mode  ON" : "Enable Testing Mode", {
+      fontSize: "14px", color: tOn ? "#ffcc44" : "#886622", stroke: "#000", strokeThickness: 2,
+    }).setOrigin(0.5);
+    const tHit = push(this.add.rectangle(cx, ty + 69, 220, 38, 0x000000, 0)
+      .setScrollFactor(0).setDepth(D + 3).setInteractive({ useHandCursor: true }));
+    tHit.on("pointerover",  () => (tBtnTxt as Phaser.GameObjects.Text).setTint(0xffffff));
+    tHit.on("pointerout",   () => (tBtnTxt as Phaser.GameObjects.Text).clearTint());
+    tHit.on("pointerdown",  () => this.toggleTestingMode());
+
     // Close button
     const closeBtn = push(this.add.text(px + W - 18, py + 18, "✕", {
       fontSize: "18px", color: "#777788", stroke: "#000", strokeThickness: 2,
@@ -3760,6 +3787,72 @@ export class GameScene extends Phaser.Scene {
     this.redrawHp();
     this.closeSettings();
     this.openSettings();
+  }
+
+  private toggleTestingMode() {
+    this.testingMode = !this.testingMode;
+    this.destroyTestBar();
+    if (this.testingMode) this.buildTestBar();
+    this.closeSettings();
+    this.openSettings();
+  }
+
+  private buildTestBar() {
+    this.destroyTestBar();
+    if (!this.testingMode) return;
+
+    const D = 19;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.testBarObjs.push(o); return o;
+    };
+
+    // Dark banner across the top
+    const barG = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    barG.fillStyle(0x0a0800, 0.88).fillRect(0, 0, 1280, 34);
+    barG.lineStyle(1, 0x886600, 1).lineBetween(0, 34, 1280, 34);
+
+    push(this.add.text(6, 17, "TEST MODE:", {
+      fontSize: "11px", color: "#cc9922", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0, 0.5));
+
+    // World entries: id 0 = Lobby, 1-9 = worlds
+    const worlds: { id: number; label: string }[] = [
+      { id: 0, label: "Lobby" },
+      ...Array.from({ length: 9 }, (_, i) => ({ id: i + 1, label: `W${i + 1}` })),
+    ];
+
+    let bx = 82;
+    for (const w of worlds) {
+      const bw = w.id === 0 ? 46 : 30;
+      const active = this.worldId === w.id;
+
+      const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+      bg.fillStyle(active ? 0x2a2000 : 0x111100, 1).fillRoundedRect(bx, 5, bw, 24, 4);
+      bg.lineStyle(1, active ? 0xddaa00 : 0x554400, 1).strokeRoundedRect(bx, 5, bw, 24, 4);
+
+      const label = push(this.add.text(bx + bw / 2, 17, w.label, {
+        fontSize: "11px", color: active ? "#ffdd44" : "#887733",
+        stroke: "#000", strokeThickness: 2,
+      }).setScrollFactor(0).setDepth(D + 2).setOrigin(0.5));
+
+      const hit = push(this.add.rectangle(bx + bw / 2, 17, bw, 24, 0x000000, 0)
+        .setScrollFactor(0).setDepth(D + 3).setInteractive({ useHandCursor: true }));
+      hit.on("pointerover",  () => (label as Phaser.GameObjects.Text).setTint(0xffffff));
+      hit.on("pointerout",   () => (label as Phaser.GameObjects.Text).clearTint());
+      hit.on("pointerdown",  () => {
+        if (this.dying || this.settingsOpen) return;
+        // Grant mysteries completion so World 9-adjacent features work
+        if (w.id >= 8) this.mysteriesComplete = true;
+        this.enterWorld(w.id);
+      });
+
+      bx += bw + 4;
+    }
+  }
+
+  private destroyTestBar() {
+    this.testBarObjs.forEach(o => o.destroy());
+    this.testBarObjs = [];
   }
 
   private buildHpDisplay() {
