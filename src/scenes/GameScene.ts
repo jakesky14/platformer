@@ -171,12 +171,23 @@ export class GameScene extends Phaser.Scene {
   private bathroomUnlocked  = false;
   private bedroomUnlocked   = false;
   private luigiGreeted      = false;
+  private boopkinsGreeted   = false;
   private phoneLog: string[] = [];
-  private phoneIconObj: Phaser.GameObjects.Text | null = null;
+  private phoneIconObj:      Phaser.GameObjects.Text     | null = null;
   private kitchenSmashOverlay: Phaser.GameObjects.Graphics | null = null;
-  private dialogueBg: Phaser.GameObjects.Graphics | null = null;
-  private dialogueText: Phaser.GameObjects.Text | null = null;
+  private dialogueBg:        Phaser.GameObjects.Graphics | null = null;
+  private dialogueText:      Phaser.GameObjects.Text     | null = null;
   private dialogueUntil = 0;
+  // Interactive world objects
+  private deskPhoneGfx:  Phaser.GameObjects.Graphics | null = null;
+  private phoneZLabel:   Phaser.GameObjects.Text     | null = null;
+  private meatballZLabel: Phaser.GameObjects.Text    | null = null;
+  private boopkinsGfx:   Phaser.GameObjects.Graphics | null = null;
+  // Cutscene
+  private cutsceneActive = false;
+  private cutsceneDone   = false;
+  private cutsceneStep   = 0;
+  private cutsceneObjs:  Phaser.GameObjects.GameObject[] = [];
 
   // Yoshi-specific
   private yoshiStomach: "empty" | "goomba" | "koopa" = "empty";
@@ -236,6 +247,15 @@ export class GameScene extends Phaser.Scene {
     this.dialogueBg          = null;
     this.dialogueText        = null;
     this.dialogueUntil       = 0;
+    this.deskPhoneGfx        = null;
+    this.phoneZLabel         = null;
+    this.meatballZLabel      = null;
+    this.boopkinsGfx         = null;
+    this.boopkinsGreeted     = false;
+    this.cutsceneActive      = false;
+    this.cutsceneDone        = false;
+    this.cutsceneStep        = 0;
+    this.cutsceneObjs        = [];
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
@@ -260,6 +280,7 @@ export class GameScene extends Phaser.Scene {
     this.setupInput();
     this.setupCamera();
     this.buildHUD();
+    if (this.worldId === 9) this.buildHouseCutscene();
   }
 
   // ── Canvas-based texture generation (reliable in create()) ──────────────────
@@ -1091,6 +1112,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.player.active) return;
     if (this.settingsOpen) return;
 
+    // ── Cutscene lock ─────────────────────────────────────────────────────────
+    if (this.cutsceneActive) {
+      (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      if (this.cutsceneStep < 5 &&
+          (Phaser.Input.Keyboard.JustDown(this.keyZ) ||
+           Phaser.Input.Keyboard.JustDown(this.cursors.space))) {
+        this.advanceCutscene();
+      }
+      return;
+    }
+
     // ── Enemy AI ────────────────────────────────────────────────────────────
     for (const g of this.goombas.getChildren()) {
       const sp = g as Phaser.Physics.Arcade.Sprite;
@@ -1223,6 +1255,8 @@ export class GameScene extends Phaser.Scene {
       // Phone pickup — on desk (DX=620)
       if (!this.hasPhone && onMainFloor && Math.abs(px - 668) < 60 && py > W1_FL - 220) {
         this.hasPhone = true;
+        this.deskPhoneGfx?.setVisible(false);
+        this.phoneZLabel?.setVisible(false);
         if (this.phoneIconObj) {
           this.phoneIconObj.setVisible(true);
           (this.phoneIconObj.getData("gfx") as Phaser.GameObjects.Graphics)?.setVisible(true);
@@ -1265,6 +1299,7 @@ export class GameScene extends Phaser.Scene {
         this.meatballActive = true;
         this.kitchenSmashOverlay?.setVisible(true);
         this.showDialogue("SMASH! Tomatoes crushed into sauce!\nInspect the meatball with Z.", "#ff4400", 3500);
+        this.time.delayedCall(800, () => this.showSmg4CluePopup());
       }
     }
 
@@ -1336,6 +1371,22 @@ export class GameScene extends Phaser.Scene {
             }
           }
         }
+        // World 9 — Boopkins NPC dialogue (↓ near Boopkins in bathroom)
+        if (this.worldId === 9 && !promptVisible) {
+          const px = this.player.x, py = this.player.y;
+          const inBathroom = px >= W1_B_LEFT && px < W1_B_RIGHT;
+          if (inBathroom) {
+            const BKX = W1_BRETURN_X + 500;
+            if (Math.abs(px - BKX) < 55 && py > W1_FL - 150) {
+              promptX = BKX; promptY = W1_FL - 200; promptVisible = true;
+              if (Phaser.Input.Keyboard.JustDown(this.cursors.down) && !this.boopkinsGreeted) {
+                this.boopkinsGreeted = true;
+                this.showDialogue("Boopkins: I'm about to sing my faaaavorite song!\nDo you want to sing with me Mario!", "#00cccc", 5000);
+                this.startBoopkinsSinging();
+              }
+            }
+          }
+        }
         // World 1 room doors
         if (this.worldId === 9 && !promptVisible) {
           const px = this.player.x, py = this.player.y;
@@ -1377,6 +1428,22 @@ export class GameScene extends Phaser.Scene {
       if (this.warpPromptText) {
         if (promptVisible) this.warpPromptText.setPosition(promptX, promptY).setVisible(true);
         else               this.warpPromptText.setVisible(false);
+      }
+    }
+
+    // ── World 9 dynamic Z labels ──────────────────────────────────────────────
+    if (this.worldId === 9) {
+      const px = this.player.x, py = this.player.y;
+      if (this.phoneZLabel) {
+        this.phoneZLabel.setVisible(
+          !this.hasPhone && px < 1920 && Math.abs(px - 668) < 60 && py > W1_FL - 220
+        );
+      }
+      if (this.meatballZLabel) {
+        const CTX = W1_K_LEFT + 460;
+        this.meatballZLabel.setVisible(
+          this.meatballActive && Math.abs(px - (CTX + 35)) < 70
+        );
       }
     }
 
@@ -2045,12 +2112,14 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xbbaa33); g.fillRect(DX + 76, FL - 200,  5, 18);
         g.fillStyle(0xffee55); g.fillEllipse(DX + 79, FL - 200, 22, 14);
         g.fillStyle(0xffff88, 0.35); g.fillCircle(DX + 79, FL - 186, 16);
-        // Phone on desk (press Z to pick up)
+        // Phone on desk — separate object so it can be hidden when picked up
         const PX = DX + 58, PY = FL - 192;
-        g.fillStyle(0x1a1a1a); g.fillRoundedRect(PX, PY, 18, 28, 3);
-        g.fillStyle(0x3388ff); g.fillRoundedRect(PX + 2, PY + 3, 14, 18, 2);
-        g.fillStyle(0x222222); g.fillCircle(PX + 9, PY + 24, 2);
-        this.add.text(DX + 67, FL - 210, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(2);
+        this.deskPhoneGfx = this.add.graphics().setDepth(2);
+        this.deskPhoneGfx.fillStyle(0x1a1a1a); this.deskPhoneGfx.fillRoundedRect(PX, PY, 18, 28, 3);
+        this.deskPhoneGfx.fillStyle(0x3388ff); this.deskPhoneGfx.fillRoundedRect(PX + 2, PY + 3, 14, 18, 2);
+        this.deskPhoneGfx.fillStyle(0x222222); this.deskPhoneGfx.fillCircle(PX + 9, PY + 24, 2);
+        // Z label — shown dynamically when player is near
+        this.phoneZLabel = this.add.text(DX + 67, FL - 215, "Z", { fontSize: "9px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(3).setVisible(false);
       }
 
       // ── WOODEN STOOL (STX=810) ───────────────────────────────────────────────
@@ -2341,32 +2410,12 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xffcc44); g.fillRect(TRX - 28, TRY - 108, 56, 34);
         g.fillStyle(0xffdd66); g.fillRect(TRX - 24, TRY - 106, 42, 26);
 
-        // Boopkins — matches playable sprite, scaled 2x (36x42 → 72x84)
+        // Boopkins — separate tracked graphics so we can animate/move him
         {
           const BKX = BREX + 500, BKY = FL;
-          // Blue mohawk spike
-          g.fillStyle(0x3399cc); g.fillTriangle(BKX - 6, BKY - 74, BKX, BKY - 84, BKX + 6, BKY - 74);
-          // Round green body
-          g.fillStyle(0x55bb55); g.fillEllipse(BKX, BKY - 40, 60, 68);
-          // Light belly
-          g.fillStyle(0x88ee88); g.fillEllipse(BKX, BKY - 32, 36, 44);
-          // Fin arms
-          g.fillStyle(0x44aa44);
-          g.fillTriangle(BKX - 30, BKY - 46, BKX - 36, BKY - 60, BKX - 24, BKY - 42);
-          g.fillTriangle(BKX + 30, BKY - 46, BKX + 36, BKY - 60, BKX + 24, BKY - 42);
-          // Big white eyes
-          g.fillStyle(0xffffff); g.fillCircle(BKX - 14, BKY - 56, 14); g.fillCircle(BKX + 14, BKY - 56, 14);
-          // Black pupils
-          g.fillStyle(0x000000); g.fillCircle(BKX - 14, BKY - 56, 8); g.fillCircle(BKX + 14, BKY - 56, 8);
-          // Eye shine
-          g.fillStyle(0xffffff); g.fillCircle(BKX - 18, BKY - 60, 3); g.fillCircle(BKX + 10, BKY - 60, 3);
-          // Wide red mouth
-          g.fillStyle(0xcc1111); g.fillEllipse(BKX, BKY - 28, 32, 20);
-          // Teeth
-          g.fillStyle(0xffffff);
-          g.fillRect(BKX - 12, BKY - 36, 6, 6); g.fillRect(BKX - 2, BKY - 36, 6, 6); g.fillRect(BKX + 8, BKY - 36, 6, 6);
-          // Shoes
-          g.fillStyle(0x333333); g.fillRect(BKX - 20, BKY - 10, 16, 10); g.fillRect(BKX + 4, BKY - 10, 16, 10);
+          this.boopkinsGfx = this.add.graphics().setDepth(2);
+          const bg = this.boopkinsGfx;
+          this.drawBoopkins(bg, BKX, BKY);
         }
       }
 
@@ -2601,7 +2650,7 @@ export class GameScene extends Phaser.Scene {
         this.kitchenSmashOverlay.fillStyle(0xff4400, 0.5);
         this.kitchenSmashOverlay.fillCircle(CTX + 35, CTY - 126, 3); this.kitchenSmashOverlay.fillCircle(CTX + 55, CTY - 128, 3);
         // "Z to inspect" label
-        this.add.text(CTX + 35, CTY - 165, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(4).setName("meatball-hint");
+        this.meatballZLabel = this.add.text(CTX + 35, CTY - 165, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(4).setVisible(false);
       }
 
       return;
@@ -3005,5 +3054,338 @@ export class GameScene extends Phaser.Scene {
         return;
       }
     }
+  }
+
+  // ── Boopkins sprite helper ───────────────────────────────────────────────────
+
+  private drawBoopkins(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    g.clear();
+    // Blue mohawk spike
+    g.fillStyle(0x3399cc);
+    g.fillTriangle(cx - 6, baseY - 74, cx, baseY - 84, cx + 6, baseY - 74);
+    // Round green body
+    g.fillStyle(0x55bb55); g.fillEllipse(cx, baseY - 40, 60, 68);
+    // Light belly
+    g.fillStyle(0x88ee88); g.fillEllipse(cx, baseY - 32, 36, 44);
+    // Fin arms
+    g.fillStyle(0x44aa44);
+    g.fillTriangle(cx - 30, baseY - 46, cx - 36, baseY - 60, cx - 24, baseY - 42);
+    g.fillTriangle(cx + 30, baseY - 46, cx + 36, baseY - 60, cx + 24, baseY - 42);
+    // Big white eyes
+    g.fillStyle(0xffffff);
+    g.fillCircle(cx - 14, baseY - 56, 14); g.fillCircle(cx + 14, baseY - 56, 14);
+    // Black pupils
+    g.fillStyle(0x000000);
+    g.fillCircle(cx - 14, baseY - 56, 8); g.fillCircle(cx + 14, baseY - 56, 8);
+    // Eye shine
+    g.fillStyle(0xffffff);
+    g.fillCircle(cx - 18, baseY - 60, 3); g.fillCircle(cx + 10, baseY - 60, 3);
+    // Wide red mouth (open, singing O shape)
+    g.fillStyle(0xcc1111); g.fillEllipse(cx, baseY - 28, 32, 20);
+    // Teeth
+    g.fillStyle(0xffffff);
+    g.fillRect(cx - 12, baseY - 36, 6, 6);
+    g.fillRect(cx - 2,  baseY - 36, 6, 6);
+    g.fillRect(cx + 8,  baseY - 36, 6, 6);
+    // Shoes
+    g.fillStyle(0x333333);
+    g.fillRect(cx - 20, baseY - 10, 16, 10);
+    g.fillRect(cx + 4,  baseY - 10, 16, 10);
+  }
+
+  // ── Cutscene system ─────────────────────────────────────────────────────────
+
+  private buildHouseCutscene() {
+    if (this.cutsceneDone) return;
+    this.cutsceneActive = true;
+    this.cutsceneStep   = 0;
+    // Freeze player
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    this.cameras.main.centerOn(960, 360);
+    this.displayCutsceneStep();
+  }
+
+  private displayCutsceneStep() {
+    // Destroy previous step objects
+    this.cutsceneObjs.forEach(o => o.destroy());
+    this.cutsceneObjs = [];
+
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.cutsceneObjs.push(o); return o;
+    };
+
+    const W = 1280, H = 720;
+    const D = 30;
+
+    // Dark overlay
+    const dim = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    dim.fillStyle(0x000000, 0.72).fillRect(0, 0, W, H);
+
+    // Dialogue box at bottom
+    const boxH = 140, boxY = H - boxH - 20;
+    const boxG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    boxG.fillStyle(0x0a0a1a, 0.95).fillRoundedRect(40, boxY, W - 80, boxH, 10);
+    boxG.lineStyle(2, 0x8888cc, 0.8).strokeRoundedRect(40, boxY, W - 80, boxH, 10);
+
+    // Speaker portrait (left = SMG4, right = Mario portrait area)
+    const smg4G = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const marioG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+
+    const step = this.cutsceneStep;
+
+    // Steps: 0=SMG4 intro, 1=Mario sad, 2=SMG4 asks, 3=Mario spaghetti,
+    //        4=SMG4 asks help, 5/6 = choice buttons (handled separately)
+    //        7=Maybe branch: SMG4 gun
+    const lines: Array<{ speaker: string; text: string; color: string }> = [
+      { speaker: "SMG4",  text: "Mario look who's here!",                              color: "#4488ff" },
+      { speaker: "Mario", text: "(Mario appears with a sad expression and tears...)",   color: "#ffffff" },
+      { speaker: "SMG4",  text: "Oh no Mario what's wrong?",                           color: "#4488ff" },
+      { speaker: "Mario", text: "My spaghetti is missing!",                             color: "#ff4444" },
+      { speaker: "SMG4",  text: "That's terrible!\nWill you help us find Mario's spaghetti?", color: "#4488ff" },
+    ];
+
+    const isMaybeStep = step === 7;
+    const currentLine = isMaybeStep
+      ? { speaker: "SMG4", text: "You will help us, RIGHT?", color: "#4488ff" }
+      : lines[Math.min(step, lines.length - 1)];
+
+    // Draw SMG4 portrait (left side)
+    const hasGun = isMaybeStep;
+    this.drawCutsceneSmg4(smg4G, 120, boxY - 10, 1, hasGun);
+
+    // Draw Mario portrait (right side) if it's Mario's line
+    if (currentLine.speaker === "Mario" || step === 1) {
+      this.drawCutsceneMarioSad(marioG, W - 120, boxY - 10, 1);
+    }
+
+    // Speaker name
+    const nameCol = currentLine.speaker === "SMG4" ? "#4488ff" : "#ff4444";
+    push(this.add.text(120, boxY + 14, currentLine.speaker, {
+      fontSize: "16px", fontStyle: "bold", color: nameCol,
+      stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 3).setOrigin(0.5, 0));
+
+    // Dialogue text
+    push(this.add.text(W / 2, boxY + 20, currentLine.text, {
+      fontSize: "18px", color: currentLine.color, align: "center",
+      stroke: "#000000", strokeThickness: 3,
+      wordWrap: { width: W - 260 },
+    }).setScrollFactor(0).setDepth(D + 3).setOrigin(0.5, 0));
+
+    // Step 4 or 7: show choice buttons
+    if (step === 4 || step === 7) {
+      const btnY = boxY + 90;
+      const yesBtn = push(this.add.text(W / 2 - 80, btnY, "[ Yes ]", {
+        fontSize: "20px", color: "#44ff44", fontStyle: "bold",
+        stroke: "#003300", strokeThickness: 3,
+        backgroundColor: "#002200", padding: { x: 14, y: 8 },
+      }).setScrollFactor(0).setDepth(D + 4).setInteractive({ useHandCursor: true }));
+      yesBtn.on("pointerover",  () => yesBtn.setColor("#88ff88"));
+      yesBtn.on("pointerout",   () => yesBtn.setColor("#44ff44"));
+      yesBtn.on("pointerdown",  () => this.endCutscene());
+
+      if (step === 4) {
+        const maybeBtn = push(this.add.text(W / 2 + 80, btnY, "[ Maybe ]", {
+          fontSize: "20px", color: "#ffcc44", fontStyle: "bold",
+          stroke: "#332200", strokeThickness: 3,
+          backgroundColor: "#221100", padding: { x: 14, y: 8 },
+        }).setScrollFactor(0).setDepth(D + 4).setInteractive({ useHandCursor: true }));
+        maybeBtn.on("pointerover",  () => maybeBtn.setColor("#ffee88"));
+        maybeBtn.on("pointerout",   () => maybeBtn.setColor("#ffcc44"));
+        maybeBtn.on("pointerdown",  () => {
+          this.cutsceneStep = 7;
+          this.displayCutsceneStep();
+        });
+      }
+
+      // Continue hint — no auto-advance on button steps
+      push(this.add.text(W - 60, H - 30, "", {}).setScrollFactor(0).setDepth(D + 4));
+    } else {
+      // Advance hint
+      push(this.add.text(W - 60, H - 30, "▶ Space/Z", {
+        fontSize: "13px", color: "#aaaaaa", stroke: "#000", strokeThickness: 2,
+      }).setScrollFactor(0).setDepth(D + 4).setOrigin(1, 1));
+    }
+  }
+
+  private advanceCutscene() {
+    if (this.cutsceneStep === 4 || this.cutsceneStep === 7) return; // wait for button
+    this.cutsceneStep++;
+    if (this.cutsceneStep > 4) {
+      this.endCutscene();
+      return;
+    }
+    this.displayCutsceneStep();
+  }
+
+  private endCutscene() {
+    this.cutsceneObjs.forEach(o => o.destroy());
+    this.cutsceneObjs  = [];
+    this.cutsceneActive = false;
+    this.cutsceneDone   = true;
+  }
+
+  private drawCutsceneSmg4(g: Phaser.GameObjects.Graphics, cx: number, baseY: number, _s: number, hasGun = false) {
+    const BY = baseY;
+    // TV head (blue)
+    g.fillStyle(0x2244cc); g.fillRoundedRect(cx - 38, BY - 110, 76, 68, 6);
+    // Screen (dark, color bars)
+    g.fillStyle(0x111122); g.fillRect(cx - 30, BY - 104, 60, 54);
+    const barColors = [0xff2222, 0xffcc00, 0x22cc22, 0x2288ff, 0xff44ff, 0x22ffee];
+    barColors.forEach((c, i) => {
+      g.fillStyle(c); g.fillRect(cx - 30 + i * 10, BY - 104, 10, 54);
+    });
+    g.fillStyle(0x000000, 0.35); g.fillRect(cx - 30, BY - 104, 60, 54);
+    // Antenna
+    g.fillStyle(0x888888);
+    g.fillRect(cx - 4, BY - 122, 4, 16);
+    g.fillRect(cx - 2, BY - 118, 4, 10);
+    // Neck
+    g.fillStyle(0x2244cc); g.fillRect(cx - 6, BY - 42, 12, 14);
+    // Bow tie
+    g.fillStyle(0xcc2222);
+    g.fillTriangle(cx - 16, BY - 36, cx, BY - 30, cx - 16, BY - 24);
+    g.fillTriangle(cx + 16, BY - 36, cx, BY - 30, cx + 16, BY - 24);
+    g.fillCircle(cx, BY - 30, 5);
+    // Body (blue shirt)
+    g.fillStyle(0x2244cc);
+    g.fillRect(cx - 26, BY - 28, 52, 38);
+    // Arms
+    g.fillStyle(0x2244cc);
+    g.fillRect(cx - 44, BY - 28, 20, 30);
+    if (!hasGun) {
+      g.fillRect(cx + 24, BY - 28, 20, 30);
+    } else {
+      // Gun arm (right side)
+      g.fillRect(cx + 24, BY - 28, 20, 18);
+      g.fillStyle(0x333333);
+      g.fillRect(cx + 38, BY - 26, 22, 12);
+      g.fillRect(cx + 52, BY - 30, 8, 20);
+    }
+    // Legs
+    g.fillStyle(0x1133cc);
+    g.fillRect(cx - 22, BY + 10, 18, 24);
+    g.fillRect(cx + 4,  BY + 10, 18, 24);
+    // Shoes
+    g.fillStyle(0x222222);
+    g.fillRect(cx - 26, BY + 30, 22, 8);
+    g.fillRect(cx + 4,  BY + 30, 22, 8);
+    // Gloves / hands
+    g.fillStyle(0xffffff);
+    g.fillCircle(cx - 34, BY + 2, 8);
+    g.fillCircle(cx + 44, BY + 2, 8);
+  }
+
+  private drawCutsceneMarioSad(g: Phaser.GameObjects.Graphics, cx: number, baseY: number, _s: number) {
+    const BY = baseY;
+    // Red cap
+    g.fillStyle(0xdd2200); g.fillRect(cx - 20, BY - 110, 40, 12);
+    g.fillRect(cx - 16, BY - 122, 32, 14);
+    // Face (skin)
+    g.fillStyle(0xffcc88); g.fillRect(cx - 18, BY - 100, 36, 26);
+    // Sad eyes (downward slant lines)
+    g.fillStyle(0x000000);
+    g.fillRect(cx - 12, BY - 92, 4, 4);
+    g.fillRect(cx + 8,  BY - 92, 4, 4);
+    // Eyebrows slanted sad
+    g.fillStyle(0x5a3010);
+    g.fillRect(cx - 14, BY - 98, 6, 2);
+    g.fillRect(cx + 8,  BY - 99, 6, 2);
+    // Frown
+    g.fillStyle(0xcc6644); g.fillRect(cx - 6, BY - 82, 12, 3);
+    g.fillRect(cx - 8, BY - 80, 4, 2);
+    g.fillRect(cx + 4, BY - 80, 4, 2);
+    // Tears
+    g.fillStyle(0x88ccff, 0.9);
+    g.fillEllipse(cx - 14, BY - 84, 5, 9);
+    g.fillEllipse(cx + 14, BY - 84, 5, 9);
+    // Moustache
+    g.fillStyle(0x5a3010);
+    g.fillEllipse(cx - 8, BY - 80, 12, 6);
+    g.fillEllipse(cx + 8, BY - 80, 12, 6);
+    // Red shirt
+    g.fillStyle(0xdd2200);
+    g.fillRect(cx - 24, BY - 74, 48, 36);
+    // Blue overalls
+    g.fillStyle(0x1133cc);
+    g.fillRect(cx - 20, BY - 56, 40, 28);
+    // Straps
+    g.fillRect(cx - 10, BY - 74, 8, 20);
+    g.fillRect(cx + 2,  BY - 74, 8, 20);
+    // Arms
+    g.fillStyle(0xdd2200);
+    g.fillRect(cx - 40, BY - 72, 18, 28);
+    g.fillRect(cx + 22, BY - 72, 18, 28);
+    // White gloves
+    g.fillStyle(0xffffff);
+    g.fillCircle(cx - 32, BY - 46, 8);
+    g.fillCircle(cx + 32, BY - 46, 8);
+    // Legs
+    g.fillStyle(0x1133cc);
+    g.fillRect(cx - 18, BY - 28, 16, 28);
+    g.fillRect(cx + 2,  BY - 28, 16, 28);
+    // Shoes
+    g.fillStyle(0x5a3010);
+    g.fillRect(cx - 22, BY - 4, 22, 10);
+    g.fillRect(cx + 2,  BY - 4, 22, 10);
+  }
+
+  // ── "A clue!" popup (brief HUD overlay, auto-destroys) ──────────────────────
+
+  private showSmg4CluePopup() {
+    const D = 20;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { objs.push(o); return o; };
+
+    // Small portrait box (bottom-left)
+    const bx = 20, by = 580, bw = 140, bh = 80;
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x0a0a1a, 0.92).fillRoundedRect(bx, by, bw, bh, 8);
+    bg.lineStyle(2, 0x4488ff, 0.8).strokeRoundedRect(bx, by, bw, bh, 8);
+
+    // Tiny SMG4 portrait
+    const pg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    this.drawCutsceneSmg4(pg, bx + 34, by + bh - 6, 0.55);
+
+    // "A clue!" text
+    push(this.add.text(bx + bw - 8, by + bh / 2, "A clue!", {
+      fontSize: "20px", fontStyle: "bold italic",
+      color: "#4488ff", stroke: "#000033", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(D + 2).setOrigin(1, 0.5));
+
+    // Auto-destroy after 2.5 s
+    this.time.delayedCall(2500, () => objs.forEach(o => o.destroy()));
+  }
+
+  // ── Boopkins singing animation ───────────────────────────────────────────────
+
+  private startBoopkinsSinging() {
+    if (!this.boopkinsGfx) return;
+    const startX = W1_BRETURN_X + 500;
+    const startY = W1_FL;
+    // Toilet center X ≈ W1_BRETURN_X + 38 + 28 = W1_BRETURN_X + 66
+    const toiletX = W1_BRETURN_X + 66;
+    // Toilet seat top: W1_FL - 96
+    const toiletY = W1_FL - 96;
+
+    // Hop to toilet
+    this.tweens.add({
+      targets: this.boopkinsGfx,
+      x: toiletX - startX,
+      y: toiletY - startY,
+      duration: 600,
+      ease: "Back.easeOut",
+      onComplete: () => {
+        // Sinusoidal bob (singing)
+        this.tweens.add({
+          targets: this.boopkinsGfx,
+          y: `+=${16}`,
+          duration: 340,
+          ease: "Sine.easeInOut",
+          yoyo: true,
+          repeat: -1,
+        });
+      },
+    });
   }
 }
