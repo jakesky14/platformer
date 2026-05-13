@@ -44,7 +44,7 @@ const LEVEL_H    = 720;
 const GROUND_TOP = LEVEL_H - 40;
 
 // ── World 1 (Mario's Mysteries house) extended layout ─────────────────────────
-const W1_TOTAL_W   = 7800;          // physics + camera bound (extended for war zone)
+const W1_TOTAL_W   = 11000;         // physics + camera bound (extended for war zone)
 const W1_CEIL      = 100;
 const W1_FL        = GROUND_TOP;    // 680
 // main floor door x-positions
@@ -68,15 +68,17 @@ const W1_BROOM_LEFT    = 4600;
 const W1_BROOM_RIGHT   = 5600;
 const W1_BROOM_RETURN_X = 4625;     // exit door inside bedroom
 const W1_BROOM_SPAWN_X  = 4700;     // spawn x when entering bedroom
-const W1_BROOM_BACK_X   = 1530;     // main-floor x after leaving bedroom (just past door)
+const W1_BROOM_BACK_X   = 1455;     // main-floor x after leaving bedroom (left of door visual)
 // house interior rooms
 const W1_BEDROOM_X = 1480;          // bedroom door x — past red chair right edge (1409)
-// war painting sub-zone (x=6000..7800) — entered via painting in bedroom
+// war painting sub-zone (x=6000..11000) — entered via painting in bedroom
 const W1_WAR_LEFT    = 6000;
-const W1_WAR_RIGHT   = 7800;
+const W1_WAR_RIGHT   = 11000;
 const W1_WAR_RETURN_X = 6025;       // exit door inside war zone
 const W1_WAR_SPAWN_X  = 6120;       // spawn x when entering war zone
 const W1_WAR_BACK_X   = 4720;       // bedroom x to return to (painting center)
+const W1_MEGGY_X         = 9200;    // Meggy NPC center x (WLX+3200)
+const W1_SHROOMY_TOWER_X = 10700;   // tower left edge x  (WLX+4700)
 // painting position in bedroom (lowered for accessibility)
 const W1_WP_CX = 4720;             // painting center x
 const W1_WP_TY = GROUND_TOP - 210; // painting top y (470)
@@ -187,6 +189,7 @@ export class GameScene extends Phaser.Scene {
   private dialogueBg:        Phaser.GameObjects.Graphics | null = null;
   private dialogueText:      Phaser.GameObjects.Text     | null = null;
   private dialogueUntil = 0;
+  private personTalkingUntil = 0;
   // Interactive world objects
   private deskPhoneGfx:  Phaser.GameObjects.Graphics | null = null;
   private phoneZLabel:   Phaser.GameObjects.Text     | null = null;
@@ -207,13 +210,35 @@ export class GameScene extends Phaser.Scene {
   private chrisGfx:         Phaser.GameObjects.Graphics | null = null;
   private swagGfx:          Phaser.GameObjects.Graphics | null = null;
   private gunPickupGfx:     Phaser.GameObjects.Graphics | null = null;
-  private warBullets:       Phaser.Physics.Arcade.Group | null = null;
-  private warClueGfx:       Phaser.GameObjects.Graphics | null = null;
-  private warClueZLabel:    Phaser.GameObjects.Text     | null = null;
   private paintingSmokeTweens: Phaser.Tweens.Tween[] = [];
+  private warBarrageActive  = false;
+  private shroomyMeatballGfx: Phaser.GameObjects.Graphics | null = null;
+  private endingTriggered   = false;
+  private guessingActive    = false;
+  private guessText         = "";
+  private guessTextObj:     Phaser.GameObjects.Text | null = null;
+  private guessPromptObjs:  Phaser.GameObjects.GameObject[] = [];
+  private guessKeyHandler:  ((e: KeyboardEvent) => void) | null = null;
   private playerBullet:     Phaser.Physics.Arcade.Sprite | null = null;
+  private warBuildingWalls: Phaser.Physics.Arcade.StaticGroup | null = null;
+  private meggyGfx:         Phaser.GameObjects.Graphics | null = null;
+  private shroomyAlive     = true;
+  private shroomyGfx:       Phaser.GameObjects.Graphics | null = null;
+  private shroomyInspected = false;
+  private shroomyZLabel:    Phaser.GameObjects.Text     | null = null;
   private boopkinsRespawned = false;
+  private boopkinsKeyGiven       = false;
+  private leftBathroomAfterBomb  = false;
+  private barrageWarningGfx:  Phaser.GameObjects.Graphics | null = null;
+  private barrageWarningText: Phaser.GameObjects.Text | null = null;
+  private lastBarrageActive:  boolean | null = null;
+  private barrageFlashEvent:  Phaser.Time.TimerEvent | null = null;
+  private pipeInspected       = false;
   // Mr. Puzzles + inventory + pipe
+  private carrotsSmashed    = false;
+  private cucumbersSmashed  = false;
+  private carrotSmashOverlay:   Phaser.GameObjects.Graphics | null = null;
+  private cucumberSmashOverlay: Phaser.GameObjects.Graphics | null = null;
   private hasPipeBomb      = false;
   private mrPuzzlesGreeted = false;
   private pipeBombUsed     = false;
@@ -268,11 +293,16 @@ export class GameScene extends Phaser.Scene {
     this.nearWarpId      = -1;
     this.warpPromptText  = null;
     this.returnTVGroup   = null;
-    // World 9 mystery state persists between room warps within worldId=9
-    if (this.worldId !== 9) {
+    // World 9 mystery state persists when inside the house (worldId=9) OR when on the
+    // house exterior (worldId=8) after having come from the house (fromWorld=9).
+    // It resets only when returning to the theater (worldId=0) or entering World 8 fresh.
+    const preserveMysteryState = this.worldId === 9 || (this.worldId === 8 && this.fromWorld === 9);
+    if (!preserveMysteryState) {
       this.hasPhone          = false;
       this.holdingMallet     = false;
       this.tomatoSmashed     = false;
+      this.carrotsSmashed    = false;
+      this.cucumbersSmashed  = false;
       this.meatballActive    = false;
       this.bathroomUnlocked  = false;
       this.bedroomUnlocked   = false;
@@ -281,19 +311,31 @@ export class GameScene extends Phaser.Scene {
       this.mrPuzzlesGreeted  = false;
       this.pipeBombUsed      = false;
       this.boopkinsRespawned = false;
-      this.cutsceneDone      = false;
+      this.boopkinsKeyGiven  = false;
+      this.leftBathroomAfterBomb = false;
+      this.pipeInspected     = false;
       this.warEntered      = false;
       this.warCutsceneDone = false;
       this.chrisAlive      = true;
       this.swagAlive       = true;
       this.warSectionDone  = false;
+      this.shroomyAlive     = true;
+      this.shroomyInspected = false;
+      this.warBarrageActive = false;
       this.phoneLog        = [];
     }
+    // Cutscene only resets when returning to the theater (World 0)
+    if (this.worldId === 0) {
+      this.cutsceneDone = false;
+    }
     this.phoneIconObj        = null;
-    this.kitchenSmashOverlay = null;
+    this.kitchenSmashOverlay    = null;
+    this.carrotSmashOverlay     = null;
+    this.cucumberSmashOverlay   = null;
     this.dialogueBg          = null;
     this.dialogueText        = null;
     this.dialogueUntil       = 0;
+    this.personTalkingUntil  = 0;
     this.deskPhoneGfx        = null;
     this.phoneZLabel         = null;
     this.meatballZLabel      = null;
@@ -313,11 +355,27 @@ export class GameScene extends Phaser.Scene {
     this.chrisGfx      = null;
     this.swagGfx       = null;
     this.gunPickupGfx  = null;
-    this.warBullets = null;
-    this.warClueGfx          = null;
-    this.warClueZLabel       = null;
     this.paintingSmokeTweens = [];
     this.playerBullet        = null;
+    this.warBuildingWalls    = null;
+    this.meggyGfx            = null;
+    this.shroomyGfx          = null;
+    this.shroomyZLabel       = null;
+    this.shroomyMeatballGfx  = null;
+    this.barrageWarningGfx   = null;
+    this.barrageWarningText  = null;
+    this.lastBarrageActive   = null;
+    this.barrageFlashEvent   = null;
+    this.boopkinsKeyGiven    = false;
+    this.endingTriggered     = false;
+    this.guessingActive      = false;
+    this.guessText           = "";
+    this.guessTextObj        = null;
+    this.guessPromptObjs     = [];
+    if (this.guessKeyHandler) {
+      window.removeEventListener("keydown", this.guessKeyHandler);
+      this.guessKeyHandler = null;
+    }
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
@@ -1223,17 +1281,19 @@ export class GameScene extends Phaser.Scene {
     this.dashPending = false;
 
     // ── Horizontal movement ──────────────────────────────────────────────────
+    const dialogueActive  = this.time.now < this.dialogueUntil;
+    const personTalking   = this.time.now < this.personTalkingUntil;
     if (!this.isDashing) {
-      if (goLeft) {
+      if (!personTalking && goLeft) {
         this.player.setVelocityX(-this.stats.speed);
         this.player.setFlipX(true);
         this.dashDir = -1;
-      } else if (goRight) {
+      } else if (!personTalking && goRight) {
         this.player.setVelocityX(this.stats.speed);
         this.player.setFlipX(false);
         this.dashDir = 1;
       } else {
-        this.player.setVelocityX(body.velocity.x * 0.7);
+        this.player.setVelocityX(personTalking ? 0 : body.velocity.x * 0.7);
       }
     }
 
@@ -1297,8 +1357,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     // ── Yoshi tongue / spit ──────────────────────────────────────────────────
+    // zConsumed prevents Z from triggering both Yoshi actions AND World 9 interactions
+    let zConsumed = false;
     if (this.character === "yoshi") {
-      if (Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+      if (this.worldId !== 9 && Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+        zConsumed = true;
         if (this.yoshiStomach !== "empty") {
           this.yoshiSpit();
         } else if (!this.tongueActive) {
@@ -1313,7 +1376,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // ── World 9 Z interactions ────────────────────────────────────────────────
-    if (this.worldId === 9 && this.character !== "yoshi" && Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+    if (this.worldId === 9 && !zConsumed && Phaser.Input.Keyboard.JustDown(this.keyZ)) {
       const px = this.player.x, py = this.player.y;
       const onMainFloor = px < 1920;
       const inKitchen   = px >= W1_K_LEFT && px < W1_K_RIGHT;
@@ -1350,20 +1413,22 @@ export class GameScene extends Phaser.Scene {
           this.bathroomUnlocked = true;
           this.mrPuzzlesGfx?.setVisible(true);
           this.time.delayedCall(1500, () => {
-            this.showDialogue("Luigi: Great work! Here's the bathroom key!", "#44ff44", 3500);
+            this.showPersonDialogue("Luigi: Great work! Here's the bathroom key!", "#44ff44", 3500);
+            this.time.delayedCall(4000, () => {
+              this.showPersonDialogue("Luigi: Oh, it's TV TIME!", "#44ff44", 3000);
+            });
           });
         }
       }
 
-      // Inspect pipe meatball (second clue)
-      else if (inBathroom && this.pipeRevealGfx?.visible) {
+      // Inspect pipe meatball (second clue) — pipe stays visible after inspection
+      else if (inBathroom && this.pipeRevealGfx?.visible && !this.pipeInspected) {
         const pipeX = W1_BRETURN_X + 66;
         if (Math.abs(px - pipeX) < 65) {
-          this.pipeRevealGfx.setVisible(false);
           this.pipeZLabel?.setVisible(false);
           this.addClue("A pipe — the spaghetti was hidden inside!");
           this.showDialogue("Clue logged to phone:\n\"A pipe\"", "#88ff88", 4000);
-          this.bedroomUnlocked = true;
+          this.pipeInspected = true;
           this.mrPuzzlesGfx?.setVisible(false);
           this.time.delayedCall(800, () => this.showSmg4CluePopup("Another clue!"));
         }
@@ -1371,7 +1436,7 @@ export class GameScene extends Phaser.Scene {
 
       // Grab gun in war zone
       else if (this.warEntered && !this.holdingGun && !this.warSectionDone) {
-        const GX = W1_WAR_LEFT + 1400;
+        const GX = W1_WAR_LEFT + 2200;
         if (this.gunPickupGfx?.visible && Math.abs(px - GX) < 50) {
           this.holdingGun = true;
           this.gunPickupGfx.setVisible(false);
@@ -1381,31 +1446,46 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // Inspect spaghetti war clue after defeating Chris and Swagmaster
-      else if (this.warEntered && this.warClueGfx?.visible) {
-        const CLX = W1_WAR_LEFT + 1550;
-        if (Math.abs(px - CLX) < 60) {
-          this.warClueGfx.setVisible(false);
-          this.warClueZLabel?.setVisible(false);
+      // Inspect defeated Shroomy on tower top → mushroom clue
+      else if (this.warEntered && !this.shroomyAlive && !this.shroomyInspected) {
+        const TX = W1_SHROOMY_TOWER_X + 40;
+        if (Math.abs(px - TX) < 70 && py < W1_FL - 280) {
+          this.shroomyInspected = true;
           this.warSectionDone = true;
-          this.addClue("Spaghetti — it was hidden inside the war painting!");
-          this.showDialogue("Clue logged to phone:\n\"Spaghetti in the painting\"", "#ffcc44", 4000);
+          this.shroomyZLabel?.setVisible(false);
+          this.addClue("Mushroom — a meatball was hidden on Shroomy's head!");
+          this.showDialogue("Found a meatball on Shroomy's head!\nFinal clue: MUSHROOM", "#ffcc44", 4500);
           this.time.delayedCall(800, () => this.showSmg4CluePopup("THE FINAL CLUE!"));
         }
       }
     }
 
     // ── World 9 SHIFT+mallet smash ────────────────────────────────────────────
-    if (this.worldId === 9 && this.holdingMallet && !this.tomatoSmashed) {
+    if (this.worldId === 9 && this.holdingMallet) {
       const px = this.player.x;
       const CTX = W1_K_LEFT + 460;
-      if (Math.abs(px - (CTX + 35)) < 80 && Phaser.Input.Keyboard.JustDown(this.keyShift)) {
-        this.tomatoSmashed = true;
-        this.holdingMallet = false;
-        this.meatballActive = true;
-        this.kitchenSmashOverlay?.setVisible(true);
-        this.showDialogue("SMASH! Tomatoes crushed into sauce!\nInspect the meatball with Z.", "#ff4400", 3500);
-        this.time.delayedCall(800, () => this.showSmg4CluePopup());
+      if (Phaser.Input.Keyboard.JustDown(this.keyShift)) {
+        // Carrots → orange sauce (mallet stays)
+        if (!this.carrotsSmashed && Math.abs(px - (CTX + 79)) < 80) {
+          this.carrotsSmashed = true;
+          this.carrotSmashOverlay?.setVisible(true);
+          this.showDialogue("SMASH! Carrots crushed into orange sauce!", "#ff8811", 3000);
+        }
+        // Cucumbers → green sauce (mallet stays)
+        else if (!this.cucumbersSmashed && Math.abs(px - (CTX + 119)) < 80) {
+          this.cucumbersSmashed = true;
+          this.cucumberSmashOverlay?.setVisible(true);
+          this.showDialogue("SMASH! Cucumbers crushed into green sauce!", "#228822", 3000);
+        }
+        // Tomatoes → meatball, mallet disappears
+        else if (!this.tomatoSmashed && Math.abs(px - (CTX + 35)) < 80) {
+          this.tomatoSmashed = true;
+          this.holdingMallet = false;
+          this.meatballActive = true;
+          this.kitchenSmashOverlay?.setVisible(true);
+          this.showDialogue("SMASH! Tomatoes crushed into sauce!\nInspect the meatball with Z.", "#ff4400", 3500);
+          this.time.delayedCall(800, () => this.showSmg4CluePopup());
+        }
       }
     }
 
@@ -1415,41 +1495,129 @@ export class GameScene extends Phaser.Scene {
       this.firePlayerBullet();
     }
 
-    // ── World 9 war zone: player bullet hits Chris/Swag ────────────────────────
+    // ── World 9 war zone: player bullet hits Chris/Swag/Shroomy ──────────────
     if (this.worldId === 9 && this.warEntered && this.playerBullet?.active) {
       const pb = this.playerBullet;
-      if (this.chrisAlive && Math.abs(pb.x - (W1_WAR_LEFT + 1050)) < 35 &&
+      if (this.chrisAlive && Math.abs(pb.x - (W1_WAR_LEFT + 2400)) < 35 &&
           Math.abs(pb.y - (W1_FL - 42)) < 42) {
         this.chrisAlive = false;
         pb.destroy();
         this.playerBullet = null;
         this.chrisGfx?.setVisible(false);
         this.showDialogue("Chris is down!", "#ffcc44", 2000);
-      } else if (this.swagAlive && Math.abs(pb.x - (W1_WAR_LEFT + 1250)) < 35 &&
+      } else if (this.swagAlive && Math.abs(pb.x - (W1_WAR_LEFT + 2600)) < 35 &&
           Math.abs(pb.y - (W1_FL - 42)) < 42) {
         this.swagAlive = false;
         pb.destroy();
         this.playerBullet = null;
         this.swagGfx?.setVisible(false);
         this.showDialogue("Swagmaster is down!", "#ffcc44", 2000);
+      } else if (this.shroomyAlive &&
+          Math.abs(pb.x - (W1_SHROOMY_TOWER_X + 40)) < 60 &&
+          pb.y < W1_FL - 280) {
+        this.shroomyAlive = false;
+        pb.destroy();
+        this.playerBullet = null;
+        this.shroomyGfx?.setAlpha(0.35);
+        this.showShroomyMeatball();
+        this.shroomyZLabel?.setVisible(true);
+        this.showDialogue("Shroomy is down!\nClimb up and inspect him (Z).", "#88ff88", 3000);
       }
-      // Reveal spaghetti clue when both defeated
-      if (!this.chrisAlive && !this.swagAlive && !this.warSectionDone &&
-          !this.warClueGfx?.visible) {
-        this.warClueGfx?.setVisible(true);
-        this.showDialogue("Both enemies defeated!\nSomething glowing appeared ahead...", "#88ff88", 3000);
+      if (!this.chrisAlive && !this.swagAlive) {
+        this.showDialogue("Both enemies defeated!\nAdvance deeper into the war zone.", "#88ff88", 2500);
       }
     }
 
-    // ── Boopkins respawn beside toilet after pipe bomb ─────────────────────────
-    if (this.worldId === 9 && this.pipeBombUsed && !this.boopkinsRespawned) {
+    // ── Barrage height-damage check + warning overlay (red=danger, yellow=safe) ─
+    {
+      const inWarZone = this.worldId === 9 && this.warEntered && !this.warSectionDone;
+      if (inWarZone) {
+        const active = this.warBarrageActive;
+        if (active !== this.lastBarrageActive) {
+          this.lastBarrageActive = active;
+          const wg = this.barrageWarningGfx;
+          if (wg) {
+            wg.clear();
+            if (active) {
+              wg.fillStyle(0xff1100, 0.28).fillRect(0, 0, 1280, 220);
+              wg.lineStyle(4, 0xff3300, 0.85).strokeRect(0, 0, 1280, 220);
+              wg.lineStyle(2, 0xff6600, 0.5).strokeRect(4, 4, 1272, 212);
+            } else {
+              wg.fillStyle(0xffcc00, 0.18).fillRect(0, 0, 1280, 220);
+              wg.lineStyle(4, 0xffdd00, 0.75).strokeRect(0, 0, 1280, 220);
+              wg.lineStyle(2, 0xffee88, 0.4).strokeRect(4, 4, 1272, 212);
+            }
+            wg.setVisible(true);
+          }
+          this.barrageWarningText
+            ?.setColor(active ? "#ff4400" : "#ffdd00")
+            .setText(active ? "⚠  DANGER — STAY LOW!  ⚠" : "✓  SAFE — MOVE NOW!  ✓")
+            .setVisible(true);
+        }
+        const onTower = this.player.x >= W1_SHROOMY_TOWER_X - 50 && this.player.x <= W1_SHROOMY_TOWER_X + 130;
+        if (active && this.player.y < W1_FL - 72 && !onTower) {
+          this.takeDamage();
+        }
+      } else if (this.lastBarrageActive !== null) {
+        this.lastBarrageActive = null;
+        this.barrageWarningGfx?.setVisible(false);
+        this.barrageWarningText?.setVisible(false);
+      }
+    }
+
+    // ── Ending trigger behind Shroomy's tower ─────────────────────────────────
+    if (this.worldId === 9 && this.warEntered && this.shroomyInspected &&
+        !this.endingTriggered && this.player.x > W1_SHROOMY_TOWER_X + 88) {
+      this.endingTriggered = true;
+      this.warEntered      = false;
+      this.holdingGun      = false;
+      this.warBarrageActive = false;
+      this.player.setPosition(W1_WAR_BACK_X, W1_FL - 50);
+      (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      this.cameras.main.setBounds(W1_BROOM_LEFT, 0, W1_BROOM_RIGHT - W1_BROOM_LEFT, LEVEL_H);
+      this.cameras.main.centerOn(W1_WAR_BACK_X, W1_FL);
+      this.time.delayedCall(600, () => this.startGuessSequence());
+    }
+
+    // ── DOWN key: dismiss active dialogue (consume before any NPC interaction) ──
+    const downJust = Phaser.Input.Keyboard.JustDown(this.cursors.down);
+    let downConsumed = false;
+    if (dialogueActive && downJust) {
+      this.dialogueUntil      = 0;
+      this.personTalkingUntil = 0;
+      this.dialogueBg?.setVisible(false);
+      this.dialogueText?.setVisible(false);
+      downConsumed = true;
+    }
+
+    // ── World 9 war zone: talk to Meggy (down arrow) ──────────────────────────
+    if (this.worldId === 9 && this.warEntered && !downConsumed && downJust) {
+      const px2 = this.player.x;
+      if (Math.abs(px2 - W1_MEGGY_X) < 90) {
+          this.showPersonDialogue(
+          "Meggy: \"There is a meatball on a tower farther down\"",
+          "#ff9933", 4500
+        );
+      }
+    }
+
+    // ── Boopkins: track when player exits bathroom after bomb ──────────────────
+    if (this.worldId === 9 && this.pipeBombUsed && !this.leftBathroomAfterBomb) {
       const px = this.player.x;
-      if (px >= W1_B_LEFT && px < W1_B_RIGHT && this.boopkinsGfx) {
+      if (px < W1_B_LEFT || px >= W1_B_RIGHT) {
+        this.leftBathroomAfterBomb = true;
+      }
+    }
+    // ── Boopkins respawn when player RE-ENTERS bathroom after having left ──────
+    if (this.worldId === 9 && this.pipeBombUsed && this.leftBathroomAfterBomb && !this.boopkinsRespawned) {
+      const px = this.player.x;
+      if (px >= W1_B_LEFT && px < W1_B_RIGHT) {
         this.boopkinsRespawned = true;
-        this.tweens.killTweensOf(this.boopkinsGfx);
-        this.boopkinsGfx.setPosition(0, 0);
-        this.drawBoopkins(this.boopkinsGfx, W1_BRETURN_X + 130, W1_FL);
-        this.boopkinsGfx.setVisible(true);
+        if (this.boopkinsGfx) this.tweens.killTweensOf(this.boopkinsGfx);
+        this.boopkinsGfx?.destroy();
+        const respawnX = W1_B_LEFT + 310;
+        this.boopkinsGfx = this.add.graphics().setDepth(2);
+        this.drawBoopkins(this.boopkinsGfx, respawnX, W1_FL);
       }
     }
 
@@ -1478,7 +1646,7 @@ export class GameScene extends Phaser.Scene {
             break;
           }
         }
-        if (this.nearWarpId >= 0 && Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+        if (this.nearWarpId >= 0 && downJust && !downConsumed) {
           this.enterWorld(this.nearWarpId);
         }
       } else if (this.worldId !== 0 && this.returnTVGroup) {
@@ -1491,7 +1659,7 @@ export class GameScene extends Phaser.Scene {
               Math.abs(this.player.y - zone.y) < hh + 14) {
             promptX = zone.x; promptY = zone.y - hh - 8;
             promptVisible = true;
-            if (Phaser.Input.Keyboard.JustDown(this.cursors.down))
+            if (downJust && !downConsumed)
               this.enterWorld(this.worldId === 9 ? 8 : 0);
             break;
           }
@@ -1503,7 +1671,7 @@ export class GameScene extends Phaser.Scene {
           if (nearDoor) {
             promptX = 940; promptY = 325;
             promptVisible = true;
-            if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) this.enterWorld(9);
+            if (downJust && !downConsumed) this.enterWorld(9);
           }
         }
         // World 9 — Luigi NPC dialogue (↓ near mallet in kitchen, no enter prompt)
@@ -1513,9 +1681,14 @@ export class GameScene extends Phaser.Scene {
           if (inKitchen) {
             const LX = W1_K_LEFT + 650;
             if (Math.abs(px - LX) < 55 && py > W1_FL - 180) {
-              if (Phaser.Input.Keyboard.JustDown(this.cursors.down) && !this.luigiGreeted) {
+              if (downJust && !downConsumed && !this.luigiGreeted) {
                 this.luigiGreeted = true;
-                this.showDialogue("Luigi: I need your help! I'm making red pasta\nsauce! Can you make some for me?", "#44ff44", 5000);
+                this.showPersonDialogue("Luigi: I need your help! I'm making red pasta\nsauce! Can you make some for me?", "#44ff44", 5000);
+                this.time.delayedCall(10000, () => {
+                  if (!this.holdingMallet && !this.tomatoSmashed) {
+                    this.showPersonDialogue("SMG4: There's got to be something we can smash with, right?", "#4488ff", 4000);
+                  }
+                });
               }
             }
           }
@@ -1527,10 +1700,24 @@ export class GameScene extends Phaser.Scene {
           if (inBathroom) {
             const BKX = W1_BRETURN_X + 500;
             if (Math.abs(px - BKX) < 55 && py > W1_FL - 150 && !this.pipeBombUsed) {
-              if (Phaser.Input.Keyboard.JustDown(this.cursors.down) && !this.boopkinsGreeted) {
+              if (downJust && !downConsumed && !this.boopkinsGreeted) {
                 this.boopkinsGreeted = true;
-                this.showDialogue("Boopkins: I'm about to sing my faaaavorite song!\nDo you want to sing with me Mario!", "#00cccc", 5000);
+                this.showPersonDialogue("Boopkins: I'm about to sing my faaaavorite song!\nDo you want to sing with me Mario!", "#00cccc", 5000);
                 this.startBoopkinsSinging();
+              }
+            }
+            // After pipe bomb: re-spawned Boopkins gives the bedroom key
+            if (this.pipeBombUsed && this.boopkinsRespawned && !this.boopkinsKeyGiven) {
+              const RBX = W1_B_LEFT + 310;
+              if (Math.abs(px - RBX) < 70 && py > W1_FL - 150) {
+                if (downJust && !downConsumed) {
+                  this.boopkinsKeyGiven = true;
+                  this.bedroomUnlocked  = true;
+                  this.showPersonDialogue("Boopkins: S-Sorry about that! Here, take this key\nas an apology!", "#00cccc", 4500);
+                  this.time.delayedCall(4800, () => {
+                    this.showDialogue("Bedroom unlocked! Check the painting upstairs.", "#88ff88", 3000);
+                  });
+                }
               }
             }
           }
@@ -1542,9 +1729,9 @@ export class GameScene extends Phaser.Scene {
           if (onMainFloor && this.bathroomUnlocked && !this.mrPuzzlesGreeted) {
             const MPX = 1370;
             if (Math.abs(px - MPX) < 60 && py > W1_FL - 150) {
-              if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+              if (downJust && !downConsumed) {
                 this.mrPuzzlesGreeted = true;
-                this.showDialogue("Mr. Puzzles: TV time!\nWatch the Mario Movie with bonus features!", "#ffff44", 4000);
+                this.showPersonDialogue("Mr. Puzzles: TV time!\nWatch the Mario Movie with bonus features!", "#ffff44", 4000);
                 this.time.delayedCall(4500, () => this.showMovieCutscene());
               }
             }
@@ -1568,12 +1755,21 @@ export class GameScene extends Phaser.Scene {
             if (nearFloor && Math.abs(px - door.dx) < 36) {
               promptX = door.dx; promptY = W1_FL - 112;
               promptVisible = true;
-              if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+              if (downJust && !downConsumed) {
                 if (door.locked) {
                   this.showDialogue(door.lockMsg ?? "Locked!", "#ff8844", 2500);
                 } else {
                   this.player.setPosition(door.destX, door.destY);
                   (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+                  if (door.dx === W1_WAR_RETURN_X) {
+                    this.warEntered  = false;
+                    this.holdingGun  = false;
+                    this.warBarrageActive = false;
+                    if (this.shroomyInspected && !this.endingTriggered) {
+                      this.endingTriggered = true;
+                      this.time.delayedCall(800, () => this.startGuessSequence());
+                    }
+                  }
                   const dx = door.destX;
                   let bL = 0, bW = 1920;
                   if (dx >= W1_K_LEFT && dx < W1_K_RIGHT)              { bL = W1_K_LEFT;     bW = W1_K_RIGHT - W1_K_LEFT; }
@@ -1588,14 +1784,14 @@ export class GameScene extends Phaser.Scene {
             }
           }
         }
-        // World 9 — war painting warp (↓ in midair near painting → enter war zone)
+        // World 9 — war painting warp (↓ near painting → enter war zone)
         if (this.worldId === 9 && !promptVisible) {
           const px = this.player.x, py = this.player.y;
           const inBedroom = px >= W1_BROOM_LEFT && px < W1_BROOM_RIGHT;
-          const inAirNow  = !(this.player.body as Phaser.Physics.Arcade.Body).blocked.down;
-          if (inBedroom && inAirNow && !this.warEntered &&
-              Math.abs(px - W1_WP_CX) < 80 && py > W1_WP_TY - 60 && py < W1_FL - 60) {
-            if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+          if (inBedroom && Math.abs(px - W1_WP_CX) < 70 && py > W1_WP_TY - 50) {
+            promptX = W1_WP_CX; promptY = W1_WP_TY - 22;
+            promptVisible = true;
+            if (downJust && !downConsumed) {
               this.warEntered = true;
               this.player.setPosition(W1_WAR_SPAWN_X, W1_FL - 50);
               (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
@@ -1603,7 +1799,7 @@ export class GameScene extends Phaser.Scene {
               this.cameras.main.centerOn(W1_WAR_SPAWN_X, W1_FL);
               if (!this.warCutsceneDone) {
                 this.warCutsceneDone = true;
-                this.showDialogue("SMG4: Mario, look we are in the middle of a war!", "#4488ff", 4500);
+                this.showPersonDialogue("SMG4: Mario, look we are in the middle of a war!", "#4488ff", 4500);
               }
             }
           }
@@ -1641,9 +1837,9 @@ export class GameScene extends Phaser.Scene {
         const pipeX = W1_BRETURN_X + 66;
         this.pipeZLabel.setVisible(Math.abs(px - pipeX) < 65);
       }
-      if (this.warClueZLabel && this.warClueGfx?.visible) {
-        const CLX = W1_WAR_LEFT + 1550;
-        this.warClueZLabel.setVisible(this.warEntered && Math.abs(px - CLX) < 60);
+      if (this.shroomyZLabel && !this.shroomyAlive && !this.shroomyInspected) {
+        const TX = W1_SHROOMY_TOWER_X + 40;
+        this.shroomyZLabel.setVisible(this.warEntered && Math.abs(px - TX) < 80 && py < W1_FL - 280);
       }
     }
 
@@ -2793,19 +2989,23 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // ═══ WAR PAINTING SUB-ZONE (x=W1_WAR_LEFT..W1_WAR_RIGHT) ════════════════
+      // ═══ WAR PAINTING SUB-ZONE (x=W1_WAR_LEFT..W1_WAR_RIGHT, extended) ══════
       {
         const WLX = W1_WAR_LEFT, WRX = W1_WAR_RIGHT;
         // Dark smoky orange-red war sky
         g.fillStyle(0x1a0500); g.fillRect(WLX, CEIL, WRX - WLX, FL - CEIL);
-        // Smoke clouds
+        // Smoke clouds across the extended zone
         g.fillStyle(0x2a1000, 0.8);
-        for (const [cx2,cy2,cw,ch] of [[WLX+150,200,200,60],[WLX+450,160,250,70],[WLX+900,190,200,50],[WLX+1200,170,280,65],[WLX+1500,200,220,60]] as [number,number,number,number][])
+        for (const [cx2,cy2,cw,ch] of [
+          [WLX+150,200,200,60],[WLX+500,160,260,70],[WLX+900,190,200,50],
+          [WLX+1300,170,280,65],[WLX+1700,200,220,60],[WLX+2100,180,240,70],
+          [WLX+2500,165,260,65],[WLX+2800,200,200,58],
+        ] as [number,number,number,number][])
           g.fillEllipse(cx2, cy2, cw, ch);
         // Orange fire glow on horizon
         g.fillStyle(0xff5500, 0.22); g.fillRect(WLX, FL - 260, WRX - WLX, 260);
         g.fillStyle(0xff2200, 0.12); g.fillRect(WLX, FL - 400, WRX - WLX, 180);
-        // Damaged ground (dark, cracked)
+        // Damaged ground
         g.fillStyle(0x1a1000); g.fillRect(WLX, FL, WRX - WLX, LEVEL_H - FL);
         g.fillStyle(0x2a1800); g.fillRect(WLX, FL - 6, WRX - WLX, 6);
         // Ceiling
@@ -2823,115 +3023,203 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xddaa22); g.fillCircle(WLEX + 12, FL - 48, 4);
         this.add.text(WLEX, FL - 113, "EXIT", { fontSize: "9px", color: "#aa8855", fontStyle: "bold" }).setOrigin(0.5, 0).setDepth(2);
 
-        // ── RUINED BUILDING 1 (x=6230..6400) ──────────────────────────────────
-        {
-          const B1X = WLX + 230;
-          // Main body
-          g.fillStyle(0x888880); g.fillRect(B1X, FL - 300, 170, 300);
-          g.fillStyle(0x777770); g.fillRect(B1X, FL - 300, 30, 300);
-          g.fillStyle(0x999988); g.fillRect(B1X + 30, FL - 300, 140, 300);
-          // Broken top edge (jagged)
-          g.fillStyle(0x1a0500); // sky colour to "cut out" top
-          g.fillTriangle(B1X + 40, FL - 300, B1X + 70, FL - 340, B1X + 100, FL - 300);
-          g.fillTriangle(B1X + 90, FL - 300, B1X + 130, FL - 320, B1X + 160, FL - 300);
-          // Blown-out windows (dark holes)
-          g.fillStyle(0x110800);
-          g.fillRect(B1X + 40, FL - 260, 30, 28); g.fillRect(B1X + 90, FL - 260, 30, 28);
-          g.fillRect(B1X + 40, FL - 210, 30, 28); g.fillRect(B1X + 90, FL - 210, 30, 28);
-          // Fire in one window
-          g.fillStyle(0xff4400, 0.7); g.fillCircle(B1X + 105, FL - 246, 10);
-          g.fillStyle(0xffaa00, 0.5); g.fillCircle(B1X + 108, FL - 250, 6);
-          // Rubble pile at base
-          g.fillStyle(0x666660);
-          g.fillEllipse(B1X + 20, FL, 80, 28); g.fillEllipse(B1X + 120, FL, 60, 22);
-        }
+        // Helper: small ruined wall fragment (1/4 size — 45px wide, ~70px tall)
+        const ruinedBuilding = (bx: number, height: number, tint: number) => {
+          const W = 45, H = Math.round(height / 4);
+          g.fillStyle(tint);            g.fillRect(bx, FL - H, W, H);
+          g.fillStyle(tint - 0x111110); g.fillRect(bx, FL - H, 8, H);
+          g.fillStyle(tint + 0x111108); g.fillRect(bx + 8, FL - H, W - 8, H);
+          // Jagged broken top
+          g.fillStyle(0x1a0500);
+          g.fillTriangle(bx + 6, FL - H, bx + 16, FL - H - 14, bx + 26, FL - H);
+          g.fillTriangle(bx + 26, FL - H, bx + 36, FL - H - 10, bx + 44, FL - H);
+          // Small dark window (if tall enough)
+          if (H > 40) {
+            g.fillStyle(0x110800);
+            g.fillRect(bx + 11, FL - H + 12, 10, 8); g.fillRect(bx + 27, FL - H + 12, 10, 8);
+          }
+          // Fire glow in window
+          g.fillStyle(0xff4400, 0.6); g.fillCircle(bx + 32, FL - H + 18, 5);
+          // Rubble
+          g.fillStyle(tint - 0x222220);
+          g.fillEllipse(bx + 10, FL, 22, 8); g.fillEllipse(bx + 34, FL, 16, 6);
+        };
 
-        // ── RIVER GAP (x=6550..6700) ───────────────────────────────────────────
+        // 5 ruined wall fragments across the zone (1/4 size, same x positions)
+        ruinedBuilding(WLX + 230, 290, 0x888880);
+        ruinedBuilding(WLX + 700, 260, 0x7a7a70);
+        ruinedBuilding(WLX + 1180, 310, 0x888875);
+        ruinedBuilding(WLX + 1660, 250, 0x7a7868);
+        ruinedBuilding(WLX + 2140, 280, 0x858575);
+
+        // ── RIVER GAP (x=6500..6700) ───────────────────────────────────────────
         {
-          const RX = WLX + 550, RW = 150;
-          // Water (dark blue)
+          const RX = WLX + 500, RW = 200;
           g.fillStyle(0x001830); g.fillRect(RX, FL, RW, LEVEL_H - FL);
           g.fillStyle(0x002040); g.fillRect(RX, FL, RW, 8);
-          // Ripples
           g.fillStyle(0x004468, 0.5);
-          for (let ri = 0; ri < 4; ri++)
-            g.fillEllipse(RX + 18 + ri * 36, FL + 14, 28, 6);
-          // Cut away ground colour
+          for (let ri = 0; ri < 5; ri++)
+            g.fillEllipse(RX + 20 + ri * 38, FL + 14, 28, 6);
+          // Cut sky through river column
           g.fillStyle(0x1a0500); g.fillRect(RX, CEIL, RW, FL - CEIL);
-          // Broken bridge planks (floating platforms, drawn here; physics in buildWorldLevel)
+          // Broken bridge planks — low enough to jump onto (y=FL-50)
           g.fillStyle(0x5a3a1a);
-          g.fillRect(RX - 10, FL - 72, 54, 12); g.fillRect(RX - 8, FL - 70, 50, 8);
-          g.fillRect(RX + 60, FL - 100, 54, 12); g.fillRect(RX + 62, FL - 98, 50, 8);
-          g.fillRect(RX + 118, FL - 60, 54, 12); g.fillRect(RX + 120, FL - 58, 50, 8);
-          // Planks look damaged
-          g.fillStyle(0x3a2000); g.fillRect(RX + 16, FL - 70, 4, 8); g.fillRect(RX + 82, FL - 98, 4, 8);
+          g.fillRect(RX - 10, FL - 52, 58, 12); g.fillRect(RX - 8, FL - 50, 54, 8);
+          g.fillRect(RX + 68, FL - 70, 58, 12); g.fillRect(RX + 70, FL - 68, 54, 8);
+          g.fillRect(RX + 148, FL - 52, 58, 12); g.fillRect(RX + 150, FL - 50, 54, 8);
+          g.fillStyle(0x3a2000); g.fillRect(RX + 18, FL - 50, 4, 8); g.fillRect(RX + 90, FL - 68, 4, 8);
         }
 
-        // ── RUINED BUILDING 2 (x=6730..6900) ──────────────────────────────────
+        // ── CHRIS NPC (far right, off-screen at start) ─────────────────────────
         {
-          const B2X = WLX + 730;
-          g.fillStyle(0x7a7a70); g.fillRect(B2X, FL - 250, 170, 250);
-          g.fillStyle(0x6a6a60); g.fillRect(B2X, FL - 250, 28, 250);
-          g.fillStyle(0x8a8a80); g.fillRect(B2X + 28, FL - 250, 142, 250);
-          // Broken top
-          g.fillStyle(0x1a0500);
-          g.fillTriangle(B2X + 20, FL - 250, B2X + 60, FL - 290, B2X + 100, FL - 250);
-          g.fillTriangle(B2X + 110, FL - 250, B2X + 140, FL - 270, B2X + 170, FL - 250);
-          // Windows
-          g.fillStyle(0x110800);
-          g.fillRect(B2X + 35, FL - 220, 28, 26); g.fillRect(B2X + 85, FL - 220, 28, 26);
-          g.fillRect(B2X + 35, FL - 180, 28, 26); g.fillRect(B2X + 85, FL - 180, 28, 26);
-          g.fillStyle(0xff6600, 0.65); g.fillCircle(B2X + 50, FL - 206, 9);
-          g.fillStyle(0x666660);
-          g.fillEllipse(B2X + 30, FL, 70, 24); g.fillEllipse(B2X + 130, FL, 50, 18);
-        }
-
-        // ── CHRIS NPC (x=7050) ─────────────────────────────────────────────────
-        {
-          const CX = WLX + 1050, CY = FL;
+          const CX = WLX + 2400, CY = FL;
           this.chrisGfx = this.add.graphics().setDepth(3);
           this.drawChrisNpc(this.chrisGfx, CX, CY);
         }
 
-        // ── SWAGMASTER NPC (x=7250) ────────────────────────────────────────────
+        // ── SWAGMASTER NPC ─────────────────────────────────────────────────────
         {
-          const SX = WLX + 1250, SY = FL;
+          const SX = WLX + 2600, SY = FL;
           this.swagGfx = this.add.graphics().setDepth(3);
           this.drawSwagNpc(this.swagGfx, SX, SY);
         }
 
-        // ── GUN PICKUP (x=7400) ────────────────────────────────────────────────
+        // ── GUN PICKUP (before Chris/Swag) ────────────────────────────────────
         {
-          const GX = WLX + 1400, GY = FL;
+          const GX = WLX + 2200, GY = FL;
           this.gunPickupGfx = this.add.graphics().setDepth(3);
           const gg = this.gunPickupGfx;
           gg.fillStyle(0x444444); gg.fillRect(GX - 16, GY - 18, 32, 10);
           gg.fillStyle(0x333333); gg.fillRect(GX + 10, GY - 18, 10, 16);
           gg.fillStyle(0x222222); gg.fillRect(GX - 16, GY - 8, 6, 8);
           gg.fillStyle(0x666666); gg.fillRect(GX - 14, GY - 16, 20, 6);
-          // Z label
           this.add.text(GX, GY - 26, "Z  Grab Gun", {
             fontSize: "9px", color: "#ffdd44", stroke: "#000", strokeThickness: 2,
           }).setOrigin(0.5, 1).setDepth(4).setName("gun-label");
         }
 
-        // ── WAR CLUE (hidden until both defeated) ─────────────────────────────
+        // (spaghetti clue removed)
+
+        // ── MEGGY'S BUNKER (WLX+3100 to WLX+3350) ────────────────────────────
         {
-          const CLX = WLX + 1550, CLY = FL;
-          this.warClueGfx = this.add.graphics().setDepth(3).setVisible(false);
-          const cg = this.warClueGfx;
-          // Glowing spaghetti strand
-          cg.lineStyle(4, 0xffcc44); cg.beginPath();
-          cg.moveTo(CLX - 18, CLY - 24);
-          cg.lineTo(CLX - 6, CLY - 40); cg.lineTo(CLX + 8, CLY - 28);
-          cg.lineTo(CLX + 20, CLY - 44); cg.strokePath();
-          cg.fillStyle(0xffcc44); cg.fillCircle(CLX, CLY - 36, 12);
-          cg.fillStyle(0xffee88); cg.fillCircle(CLX - 3, CLY - 39, 6);
-          cg.fillStyle(0xff4400, 0.6);
-          cg.fillCircle(CLX - 14, CLY - 30, 4); cg.fillCircle(CLX + 16, CLY - 36, 4);
-          this.warClueZLabel = this.add.text(CLX, CLY - 56, "Z", {
+          const BX = WLX + 3100, BW = 250, BH = 130;
+          // Bunker walls (concrete)
+          g.fillStyle(0x606055); g.fillRect(BX, FL - BH, BW, BH);
+          g.fillStyle(0x505048); g.fillRect(BX, FL - BH, 14, BH);
+          g.fillStyle(0x707065); g.fillRect(BX + 14, FL - BH, BW - 28, BH);
+          g.fillStyle(0x505048); g.fillRect(BX + BW - 14, FL - BH, 14, BH);
+          // Roof
+          g.fillStyle(0x484840); g.fillRect(BX - 6, FL - BH - 10, BW + 12, 14);
+          // Left door opening
+          g.fillStyle(0x1a0500); g.fillRect(BX + 14, FL - 80, 44, 80);
+          // Right door opening
+          g.fillStyle(0x1a0500); g.fillRect(BX + BW - 58, FL - 80, 44, 80);
+          // Window slits
+          g.fillStyle(0x110800);
+          g.fillRect(BX + 20, FL - BH + 16, 28, 10);
+          g.fillRect(BX + BW - 48, FL - BH + 16, 28, 10);
+          // Interior shadow
+          g.fillStyle(0x0e0800, 0.6); g.fillRect(BX + 58, FL - 80, BW - 116, 80);
+          // Bunker label
+          g.fillStyle(0x888877); g.fillRect(BX + BW/2 - 26, FL - BH - 4, 52, 8);
+          this.add.text(BX + BW/2, FL - BH + 2, "BUNKER", {
+            fontSize: "7px", color: "#aaaaaa",
+          }).setOrigin(0.5, 0.5).setDepth(3);
+
+          // Meggy NPC inside bunker
+          this.meggyGfx = this.add.graphics().setDepth(4);
+          this.drawMeggyNpc(this.meggyGfx, BX + BW/2, FL);
+          // Down arrow talk prompt
+          this.add.text(BX + BW/2, FL - BH + 38, "↓ Talk", {
+            fontSize: "9px", color: "#ff9933", stroke: "#000", strokeThickness: 2,
+          }).setOrigin(0.5, 0.5).setDepth(4);
+        }
+
+        // ── SHROOMY SECTION — cover buildings and tower ────────────────────────
+        {
+          const SFX = WLX + 3500; // section start x
+
+          // Additional battlefield atmosphere
+          g.fillStyle(0x2a0800, 0.4);
+          g.fillEllipse(SFX + 250, 200, 300, 70);
+          g.fillEllipse(SFX + 800, 170, 280, 60);
+          g.fillEllipse(SFX + 1300, 195, 260, 65);
+
+          // 4 small cover buildings for Shroomy section
+          ruinedBuilding(SFX + 100, 320, 0x777768);
+          ruinedBuilding(SFX + 400, 280, 0x6e6e60);
+          ruinedBuilding(SFX + 700, 340, 0x7a7a6a);
+          ruinedBuilding(SFX + 950, 300, 0x726858);
+
+          // ── TOWER ───────────────────────────────────────────────────────────
+          const TX = W1_SHROOMY_TOWER_X; // tower left edge
+          const TH = 340;                // tower height
+          // Tower body (stone)
+          g.fillStyle(0x5a5a48); g.fillRect(TX, FL - TH, 80, TH);
+          g.fillStyle(0x4a4a3a); g.fillRect(TX, FL - TH, 10, TH);
+          g.fillStyle(0x6a6a58); g.fillRect(TX + 10, FL - TH, 70, TH);
+          // Stone block pattern
+          g.fillStyle(0x404030, 0.6);
+          for (let ty = 0; ty < TH; ty += 28) {
+            g.fillRect(TX, FL - TH + ty, 80, 2);
+            if ((ty / 28) % 2 === 0) {
+              g.fillRect(TX + 40, FL - TH + ty, 2, 28);
+            } else {
+              g.fillRect(TX + 20, FL - TH + ty, 2, 28);
+              g.fillRect(TX + 60, FL - TH + ty, 2, 28);
+            }
+          }
+          // Battlements at top
+          for (let bi = 0; bi < 5; bi++) {
+            g.fillStyle(0x6a6a58); g.fillRect(TX + bi * 16, FL - TH - 16, 10, 18);
+          }
+          // Tower arrow slits
+          g.fillStyle(0x110800);
+          g.fillRect(TX + 30, FL - TH + 30, 10, 20);
+          g.fillRect(TX + 30, FL - TH + 90, 10, 20);
+          g.fillRect(TX + 30, FL - TH + 160, 10, 20);
+          g.fillRect(TX + 30, FL - TH + 230, 10, 20);
+
+          // Climbing ledges on the LEFT of the tower
+          g.fillStyle(0x5a4a2a);
+          // Ledge 1 at FL-120 (jutting left)
+          g.fillRect(TX - 70, FL - 120, 72, 12);
+          g.fillRect(TX - 68, FL - 122, 68, 4); // top edge highlight
+          // Ledge 2 at FL-240
+          g.fillRect(TX - 60, FL - 240, 62, 12);
+          g.fillRect(TX - 58, FL - 242, 58, 4);
+          // Top platform at FL-TH (tower top)
+          g.fillRect(TX, FL - TH - 2, 80, 12);
+          g.fillRect(TX + 2, FL - TH - 4, 76, 4);
+
+          // Shroomy NPC standing on tower top platform
+          this.shroomyGfx = this.add.graphics().setDepth(4);
+          this.drawShroomyNpc(this.shroomyGfx, TX + 40, FL - TH - 2);
+
+          // Z label above Shroomy (hidden until he is defeated)
+          this.shroomyZLabel = this.add.text(TX + 40, FL - TH - 70, "Z  Inspect", {
             fontSize: "9px", color: "#ffffff", stroke: "#000", strokeThickness: 2,
-          }).setOrigin(0.5, 0).setDepth(4).setVisible(false);
+          }).setOrigin(0.5, 0).setDepth(5).setVisible(false);
+
+          // ── ENDING ZONE behind the tower ─────────────────────────────────────
+          {
+            const EX = TX + 100; // behind tower (tower ends at TX+80)
+            // Glowing golden doorway
+            g.fillStyle(0x111100); g.fillRect(EX, FL - 110, 60, 110);
+            g.fillStyle(0xffdd00, 0.9); g.fillRect(EX - 4, FL - 116, 68, 8);
+            g.fillStyle(0xffdd00, 0.7); g.fillRect(EX - 4, FL - 116, 6, 110);
+            g.fillRect(EX + 58, FL - 116, 6, 110);
+            // Pulsing star
+            g.fillStyle(0xffee44); g.fillCircle(EX + 30, FL - 70, 12);
+            g.fillStyle(0xffffff); g.fillCircle(EX + 30, FL - 70, 5);
+            g.fillStyle(0xffdd00, 0.5);
+            g.fillEllipse(EX + 30, FL - 70, 40, 6);
+            g.fillEllipse(EX + 30, FL - 70, 6, 40);
+            this.add.text(EX + 30, FL - 130, "END", {
+              fontSize: "10px", color: "#ffdd00", fontStyle: "bold",
+              stroke: "#440000", strokeThickness: 3,
+            }).setOrigin(0.5, 0).setDepth(4);
+          }
         }
       }
 
@@ -3017,25 +3305,51 @@ export class GameScene extends Phaser.Scene {
       plat(W1_BROOM_LEFT + 390, W1_FL -  52, 116);   // purple bed surface
       plat(W1_WP_CX,            W1_WP_TY - 12, 100); // painting shelf (jump platform to reach painting)
 
-      // War zone floor tiles (skip river gap 6550-6700)
+      // War zone floor tiles (skip river gap 6500-6700)
       for (let wx = W1_WAR_LEFT; wx < W1_WAR_RIGHT; wx += 64) {
-        const rx = wx;
-        if (rx >= W1_WAR_LEFT + 550 && rx < W1_WAR_LEFT + 700) continue; // river gap
+        if (wx >= W1_WAR_LEFT + 500 && wx < W1_WAR_LEFT + 700) continue; // river gap
         (this.platforms.create(wx + 32, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0);
       }
-      // War zone boundary walls
-      wall(W1_WAR_LEFT);         // left edge (exit door side)
+      // War zone boundary walls only
+      wall(W1_WAR_LEFT);         // left edge
       wall(W1_WAR_RIGHT - 12);   // right edge
-      // Building walls (block bullets — right face of each building)
-      wall(W1_WAR_LEFT + 230);   // Building 1 left face
-      wall(W1_WAR_LEFT + 400);   // Building 1 right face
-      wall(W1_WAR_LEFT + 730);   // Building 2 left face
-      wall(W1_WAR_LEFT + 900);   // Building 2 right face
-      // Broken bridge platforms over river gap
-      const RXB = W1_WAR_LEFT + 550;
-      plat(RXB + 17,  W1_FL - 72,  50); // plank 1
-      plat(RXB + 87,  W1_FL - 100, 50); // plank 2
-      plat(RXB + 145, W1_FL - 60,  50); // plank 3
+      // Broken bridge platforms over river
+      const RXB = W1_WAR_LEFT + 500;
+      plat(RXB + 19,  W1_FL - 52,  54);
+      plat(RXB + 93,  W1_FL - 70,  54);
+      plat(RXB + 168, W1_FL - 52,  54);
+
+      // ── War zone building walls (solid, 1/4 size — player + bullets blocked) ─
+      this.warBuildingWalls = this.physics.add.staticGroup();
+      const bwall = (bx: number, height: number) => {
+        const H = Math.round(height / 4), W2 = 45;
+        const wb = this.warBuildingWalls!.create(bx + W2/2, W1_FL - H/2, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+        wb.setAlpha(0).setDisplaySize(W2, H).refreshBody();
+      };
+      // 5 main zone buildings
+      bwall(W1_WAR_LEFT + 230, 290);
+      bwall(W1_WAR_LEFT + 700, 260);
+      bwall(W1_WAR_LEFT + 1180, 310);
+      bwall(W1_WAR_LEFT + 1660, 250);
+      bwall(W1_WAR_LEFT + 2140, 280);
+      // Shroomy section cover buildings (SFX = WLX+3500)
+      const SFX = W1_WAR_LEFT + 3500;
+      bwall(SFX + 100, 320);
+      bwall(SFX + 400, 280);
+      bwall(SFX + 700, 340);
+      bwall(SFX + 950, 300);
+      // Tower solid walls (left side only — right stays open so player can't continue)
+      const towerPlat = (cx: number, cy: number, w: number, h = 8) => {
+        const tp = this.warBuildingWalls!.create(cx, cy, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+        tp.setAlpha(0).setDisplaySize(w, h).refreshBody();
+      };
+      const TX = W1_SHROOMY_TOWER_X;
+      // Tower body walls (only outer surfaces, so player can jump on ledges)
+      towerPlat(TX + 40, W1_FL - 170, 80, 340);      // tower body (solid block)
+      // Climbing ledges (jumpable platforms)
+      towerPlat(TX - 35, W1_FL - 120, 72, 12);        // ledge 1
+      towerPlat(TX - 30, W1_FL - 240, 62, 12);        // ledge 2
+      towerPlat(TX + 40, W1_FL - 340, 80, 12);        // tower top platform
 
       // Purple exit door warp zone at x=960
       this.returnTVGroup = this.physics.add.staticGroup();
@@ -3064,6 +3378,39 @@ export class GameScene extends Phaser.Scene {
         this.kitchenSmashOverlay.fillCircle(CTX + 35, CTY - 126, 3); this.kitchenSmashOverlay.fillCircle(CTX + 55, CTY - 128, 3);
         // "Z to inspect" label
         this.meatballZLabel = this.add.text(CTX + 35, CTY - 165, "Z", { fontSize: "8px", color: "#ffffff", stroke: "#000", strokeThickness: 2 }).setOrigin(0.5, 0).setDepth(4).setVisible(false);
+      }
+
+      // Carrot smash overlay (orange sauce) — hidden until smashed
+      {
+        const CRX = W1_K_LEFT + 460 + 73, CRY = W1_FL; // carrot center
+        this.carrotSmashOverlay = this.add.graphics().setVisible(false).setDepth(3);
+        const co = this.carrotSmashOverlay;
+        // Orange sauce puddle
+        co.fillStyle(0xff7700, 0.85); co.fillEllipse(CRX, CRY - 122, 80, 14);
+        co.fillStyle(0xff8800); co.fillCircle(CRX - 8, CRY - 136, 7);
+        co.fillStyle(0xff9922); co.fillCircle(CRX + 4, CRY - 140, 5);
+        co.fillStyle(0xffaa44); co.fillCircle(CRX + 14, CRY - 134, 4);
+        co.fillStyle(0xff6600, 0.7);
+        co.fillCircle(CRX - 20, CRY - 130, 4); co.fillCircle(CRX + 24, CRY - 128, 3);
+        // Flatten carrot greens
+        co.fillStyle(0x44aa22); co.fillRect(CRX - 10, CRY - 148, 4, 6);
+        co.fillRect(CRX + 4, CRY - 150, 4, 5);
+      }
+
+      // Cucumber smash overlay (green sauce) — hidden until smashed
+      {
+        const CUX = W1_K_LEFT + 460 + 119, CUY = W1_FL; // cucumber center
+        this.cucumberSmashOverlay = this.add.graphics().setVisible(false).setDepth(3);
+        const cu = this.cucumberSmashOverlay;
+        // Green sauce puddle
+        cu.fillStyle(0x228822, 0.85); cu.fillEllipse(CUX, CUY - 124, 76, 14);
+        cu.fillStyle(0x33aa33); cu.fillCircle(CUX - 6, CUY - 138, 7);
+        cu.fillStyle(0x44cc44); cu.fillCircle(CUX + 8, CUY - 142, 5);
+        cu.fillStyle(0x55cc44, 0.7);
+        cu.fillCircle(CUX - 18, CUY - 130, 4); cu.fillCircle(CUX + 22, CUY - 128, 3);
+        // Cucumber seeds
+        cu.fillStyle(0xffffff, 0.7);
+        cu.fillCircle(CUX - 4, CUY - 138, 2); cu.fillCircle(CUX + 6, CUY - 140, 2);
       }
 
       // Bathroom pipe reveal — hidden until Boopkins explodes
@@ -3138,6 +3485,11 @@ export class GameScene extends Phaser.Scene {
         ...((worldId === 8 && this.worldId === 9) && { fromWorld: 9 }),
       });
     });
+  }
+
+  private showPersonDialogue(text: string, color: string, durationMs: number) {
+    this.showDialogue(text, color, durationMs);
+    this.personTalkingUntil = this.time.now + durationMs;
   }
 
   private showDialogue(text: string, color: string, durationMs: number) {
@@ -3738,60 +4090,54 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawCutsceneMarioSad(g: Phaser.GameObjects.Graphics, cx: number, baseY: number, _s: number) {
-    // Movie-style Mario: big round red cap, huge black mustache, blue fluffy body, tears
-    const BY = baseY;
-
-    // Blue fluffy body (large rounded blob — movie stuffed-animal look)
-    g.fillStyle(0x3399ee); g.fillEllipse(cx, BY - 28, 96, 72);
-    g.fillStyle(0x55bbff); g.fillEllipse(cx - 8, BY - 48, 42, 32);   // highlight
-
-    // Big round head (skin)
-    g.fillStyle(0xffcc88); g.fillEllipse(cx - 2, BY - 102, 72, 68);
-
-    // Big round red cap — dome
-    g.fillStyle(0xdd2200); g.fillEllipse(cx - 2, BY - 136, 84, 42);
-    // Cap back portion covers top of head
-    g.fillStyle(0xdd2200); g.fillEllipse(cx - 2, BY - 120, 74, 52);
-    // Cap brim (darker red)
-    g.fillStyle(0xbb1100); g.fillEllipse(cx - 2, BY - 107, 82, 16);
-    // White M badge circle
-    g.fillStyle(0xffffff); g.fillCircle(cx - 6, BY - 128, 14);
-    // Red M inside badge (two vertical bars + top bar)
-    g.fillStyle(0xdd2200);
-    g.fillRect(cx - 17, BY - 138, 5, 18);
-    g.fillRect(cx + 5,  BY - 138, 5, 18);
-    g.fillRect(cx - 17, BY - 138, 22, 6);
-    // M center peak (downward V between bars)
-    g.fillTriangle(cx - 12, BY - 132, cx - 6, BY - 138, cx, BY - 132);
-
-    // Blue eyes (happy/sad)
-    g.fillStyle(0xffffff); g.fillCircle(cx - 16, BY - 108, 9);
-    g.fillStyle(0xffffff); g.fillCircle(cx + 10, BY - 108, 9);
-    g.fillStyle(0x2266dd); g.fillCircle(cx - 16, BY - 108, 6);
-    g.fillStyle(0x2266dd); g.fillCircle(cx + 10, BY - 108, 6);
-    g.fillStyle(0x000000); g.fillCircle(cx - 16, BY - 108, 3);
-    g.fillStyle(0x000000); g.fillCircle(cx + 10, BY - 108, 3);
-    g.fillStyle(0xffffff); g.fillCircle(cx - 19, BY - 112, 2);
-    g.fillStyle(0xffffff); g.fillCircle(cx + 7,  BY - 112, 2);
-    // Sad eyebrows (angled down toward center)
-    g.fillStyle(0x3a1a00);
-    g.fillRect(cx - 24, BY - 121, 14, 4);
-    g.fillRect(cx + 5,  BY - 121, 14, 4);
-
-    // Big round nose
-    g.fillStyle(0xffaa66); g.fillCircle(cx - 4, BY - 97, 9);
-    g.fillStyle(0xee9955); g.fillCircle(cx - 4, BY - 97, 7);
-
-    // HUGE black bushy mustache (two overlapping ellipses)
-    g.fillStyle(0x111111);
-    g.fillEllipse(cx - 12, BY - 87, 36, 22);
-    g.fillEllipse(cx + 12, BY - 87, 36, 22);
-    g.fillEllipse(cx,      BY - 82, 56, 18);   // lower merge
-
-    // Tears
-    g.fillStyle(0x88ccff, 0.88);
-    g.fillEllipse(cx - 22, BY - 95, 6, 12);
-    g.fillEllipse(cx + 14, BY - 95, 6, 12);
+    // Pixel-art Mario — matches playable sprite (red cap/shirt, blue overalls, skin face, brown mustache)
+    const scale = 2.6;
+    const ox = cx - Math.round(18 * scale);
+    const oy = baseY - Math.round(42 * scale);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * scale, oy + y * scale, w * scale, h * scale);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * scale, oy + y * scale, rad * scale);
+    };
+    // Red shirt (body, behind cap)
+    r(4,  0, 28, 22, 0xdd2200);
+    // Red cap
+    r(4,  0, 28,  8, 0xdd2200);
+    r(1,  7, 34,  4, 0xdd2200);
+    // White M badge on cap
+    r(14, 1,  8,  6, 0xffffff);
+    r(14, 1,  2,  5, 0xdd2200);
+    r(20, 1,  2,  5, 0xdd2200);
+    r(15, 1,  6,  2, 0xdd2200);
+    r(16, 3,  2,  2, 0xdd2200);
+    // Dark hair under cap brim
+    r(6,  9, 24,  4, 0x222200);
+    // Skin face
+    r(8, 10, 20, 12, 0xffcc88);
+    // Black eyes
+    r(11, 13, 3, 3, 0x000000);
+    r(22, 13, 3, 3, 0x000000);
+    // Brown mustache
+    r(10, 19, 6, 2, 0x552200);
+    r(20, 19, 6, 2, 0x552200);
+    // Blue overalls (full width)
+    r(0, 22, 36, 14, 0x1133cc);
+    // Red shirt sides / arms
+    r(0,  22, 4, 12, 0xdd2200);
+    r(32, 22, 4, 12, 0xdd2200);
+    // Yellow bib buttons
+    r(10, 23, 3, 3, 0xffdd00);
+    r(23, 23, 3, 3, 0xffdd00);
+    // White gloves
+    ci(2,  28, 4, 0xffffff);
+    ci(34, 28, 4, 0xffffff);
+    // Blue legs
+    r(4,  36, 12, 4, 0x1133cc);
+    r(20, 36, 12, 4, 0x1133cc);
+    // Brown boots
+    r(1,  36, 14, 6, 0x6b3a1e);
+    r(21, 36, 14, 6, 0x6b3a1e);
   }
 
   // ── "A/Another clue!" popup ──────────────────────────────────────────────────
@@ -4016,9 +4362,10 @@ export class GameScene extends Phaser.Scene {
     flash.fillStyle(0xffffff, 0.8).fillRect(0, 0, 1280, 720);
     this.time.delayedCall(80, () => flash.destroy());
 
-    // Hide Boopkins, reveal pipe
+    // Hide Boopkins, reveal pipe — capture reference now so respawn can't interfere
+    const gfxToHide = this.boopkinsGfx;
     this.time.delayedCall(100, () => {
-      this.boopkinsGfx?.setVisible(false);
+      gfxToHide?.setVisible(false);
       this.pipeRevealGfx?.setVisible(true);
       this.showDialogue("BOOM! Boopkins is gone! Inspect the pipe with Z.", "#ffaa22", 3500);
     });
@@ -4085,66 +4432,235 @@ export class GameScene extends Phaser.Scene {
   // ── War zone setup ───────────────────────────────────────────────────────────
 
   private setupWarZone() {
-    // Enemy bullet group — overlap with player → take damage
-    this.warBullets = this.physics.add.group();
-    this.physics.add.overlap(this.player, this.warBullets, (_p, b) => {
-      const blt = b as Phaser.Physics.Arcade.Sprite;
-      if (!blt.active) return;
-      blt.destroy();
-      this.takeDamage();
-    });
-    // Enemy bullets also blocked by building walls
-    this.physics.add.collider(this.warBullets, this.platforms, (_b) => {
-      (_b as Phaser.Physics.Arcade.Sprite).destroy();
-    });
+    // Player collision with building walls
+    if (this.warBuildingWalls) {
+      this.physics.add.collider(this.player, this.warBuildingWalls);
+    }
 
-    // Shooting cycle: 4 shots × 500ms (=2s), then 1s pause, repeat
-    const startBurst = () => {
-      let shots = 0;
+    // ── Barrage danger-zone warning overlay (HUD-space, toggled in update) ───
+    const wg = this.add.graphics().setScrollFactor(0).setDepth(18).setVisible(false);
+    wg.fillStyle(0xff1100, 0.28).fillRect(0, 0, 1280, 220);
+    wg.lineStyle(4, 0xff3300, 0.85).strokeRect(0, 0, 1280, 220);
+    // Pulsing border lines
+    wg.lineStyle(2, 0xff6600, 0.5).strokeRect(4, 4, 1272, 212);
+    this.barrageWarningGfx = wg;
+    this.barrageWarningText = this.add.text(640, 22, "⚠  DANGER — STAY LOW!  ⚠", {
+      fontSize: "20px", color: "#ff4400", fontStyle: "bold",
+      stroke: "#000000", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(19).setOrigin(0.5, 0).setVisible(false);
+
+    // ── High-altitude barrage: 2 s on / 1 s off ──────────────────────────────
+    // Bullets fly well above the small buildings (FL-70) from far right.
+    // Damage dealt by height-check in update() while warBarrageActive is true.
+    // Cycle: 3 s active (red, bullets) → 2 s rest (yellow flashing) → repeat.
+    const barrageCycle = () => {
+      if (this.warSectionDone) { this.warBarrageActive = false; return; }
+      // Cancel any leftover flash event from previous rest phase
+      if (this.barrageFlashEvent) {
+        this.barrageFlashEvent.remove(false);
+        this.barrageFlashEvent = null;
+      }
+      this.warBarrageActive = true;
+      // Spawn ~16 visual streaks spread over 3 s (delay 180 ms × 16 repeats = 2880 ms)
       this.time.addEvent({
-        delay: 500,
-        repeat: 3,
+        delay: 180,
+        repeat: 16,
         callback: () => {
-          if (!this.warEntered || this.warSectionDone) return;
-          this.spawnEnemyBullet();
-          shots++;
-          if (shots >= 4) {
-            // 1s break before next burst
-            this.time.delayedCall(1000, () => {
-              if (this.warEntered && !this.warSectionDone) startBurst();
-            });
-          }
+          if (this.warEntered && !this.warSectionDone) this.spawnBarrageStreak();
         },
       });
+      // After 3 s → rest phase with flashing yellow for 2 s → next cycle
+      this.time.delayedCall(3000, () => {
+        this.warBarrageActive = false;
+        if (!this.warSectionDone) {
+          // Flash the warning sign during the 2 s safe window
+          let flashOn = true;
+          this.barrageFlashEvent = this.time.addEvent({
+            delay: 250,
+            repeat: 7,   // 8 toggles × 250 ms = 2000 ms
+            callback: () => {
+              if (!this.warEntered) return;
+              flashOn = !flashOn;
+              this.barrageWarningGfx?.setVisible(flashOn);
+              this.barrageWarningText?.setVisible(flashOn);
+            },
+          });
+          this.time.delayedCall(2000, barrageCycle);
+        }
+      });
     };
-    startBurst();
+    barrageCycle();
   }
 
-  private spawnEnemyBullet() {
-    if (!this.warBullets) return;
-    const spawnBullet = (sx: number) => {
-      const blt = this.physics.add.sprite(sx - 20, W1_FL - 42, "ground-tile");
-      blt.setDisplaySize(14, 6).setAlpha(0.01);
-      (blt.body as Phaser.Physics.Arcade.Body).setAllowGravity(false).setVelocityX(-340);
-      this.warBullets!.add(blt);
-      this.time.delayedCall(5000, () => { if (blt.active) blt.destroy(); });
-    };
-    if (this.chrisAlive) spawnBullet(W1_WAR_LEFT + 1050);
-    if (this.swagAlive)  spawnBullet(W1_WAR_LEFT + 1250);
+  // Spawn one orange tracer streak flying from right → left above all buildings
+  private spawnBarrageStreak() {
+    // Sources: alive enemies contribute more bullets
+    const sources: number[] = [];
+    if (this.chrisAlive)   sources.push(W1_WAR_LEFT + 2420);
+    if (this.swagAlive)    sources.push(W1_WAR_LEFT + 2640);
+    if (this.shroomyAlive) sources.push(W1_SHROOMY_TOWER_X + 50);
+    if (sources.length === 0) return;
+
+    for (const sx of sources) {
+      const yOff = (Math.random() - 0.5) * 28; // slight y jitter
+      const fy   = W1_FL - 95 + yOff;          // well above 70 px buildings
+      const streak = this.add.graphics().setDepth(5);
+      streak.fillStyle(0xff5500, 0.92);
+      streak.fillRect(-14, -3, 28, 5);          // horizontal dash
+      streak.fillStyle(0xff8800, 0.6);
+      streak.fillRect(-26, -1, 14, 3);          // dimmer tail
+      streak.x = sx;
+      streak.y = fy;
+      // Muzzle flash at source
+      const flash = this.add.graphics().setDepth(5);
+      flash.fillStyle(0xffdd44, 0.9);
+      flash.fillCircle(sx, fy, 9);
+      this.time.delayedCall(70, () => flash.destroy());
+      // Fly left at high speed via tween (not physics — buildings don't block)
+      this.tweens.add({
+        targets: streak,
+        x: sx - (W1_WAR_RIGHT - W1_WAR_LEFT + 200),
+        duration: 2800,
+        ease: "Linear",
+        onComplete: () => streak.destroy(),
+      });
+    }
+  }
+
+  private showShroomyMeatball() {
+    const TX  = W1_SHROOMY_TOWER_X + 40;
+    const TY  = W1_FL - 342 - 18;  // above Shroomy's head on tower top
+    this.shroomyMeatballGfx = this.add.graphics().setDepth(6);
+    const m = this.shroomyMeatballGfx;
+    m.fillStyle(0x883311); m.fillCircle(TX, TY, 13);
+    m.fillStyle(0xaa5533); m.fillCircle(TX - 4, TY - 4, 7);
+    m.fillStyle(0x662200); m.fillCircle(TX + 4, TY - 3, 5);
+    m.fillStyle(0x995522); m.fillCircle(TX - 7, TY + 2, 3); m.fillCircle(TX + 7, TY + 3, 3);
+    // Sauce drops
+    m.fillStyle(0xdd2200, 0.7);
+    m.fillCircle(TX - 9, TY + 8, 4); m.fillCircle(TX + 10, TY + 7, 3);
   }
 
   private firePlayerBullet() {
     if (this.playerBullet?.active) return;
     const bx = this.player.x + 20;
     const by = this.player.y - 14;
+    // Muzzle flash
+    const flash = this.add.graphics().setDepth(5);
+    flash.fillStyle(0xffffff, 0.9); flash.fillCircle(bx, by, 8);
+    this.time.delayedCall(70, () => flash.destroy());
+    // Visible bullet — white/yellow tracer
     const blt = this.physics.add.sprite(bx, by, "ground-tile");
-    blt.setDisplaySize(14, 6).setAlpha(0.01);
-    (blt.body as Phaser.Physics.Arcade.Body).setAllowGravity(false).setVelocityX(500);
+    blt.setDisplaySize(18, 5).setAlpha(1).setTint(0xffee44);
+    (blt.body as Phaser.Physics.Arcade.Body).setAllowGravity(false).setVelocityX(560);
     this.playerBullet = blt;
-    this.time.delayedCall(2500, () => {
+    this.time.delayedCall(3000, () => {
       if (blt.active) blt.destroy();
       this.playerBullet = null;
     });
+  }
+
+  // ── SMG4 guess sequence ──────────────────────────────────────────────────────
+
+  private startGuessSequence() {
+    if (this.guessingActive) return;
+    this.guessingActive = true;
+    this.guessText = "";
+
+    const D = 22;
+    const W = 500, H = 260, x = (1280 - W) / 2, y = (720 - H) / 2;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.guessPromptObjs.push(o); return o;
+    };
+
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x05050f, 0.97).fillRoundedRect(x, y, W, H, 12);
+    bg.lineStyle(3, 0x4488ff, 0.9).strokeRoundedRect(x, y, W, H, 12);
+
+    // SMG4 mini portrait
+    const pg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    this.drawCutsceneSmg4(pg, x + 62, y + 185, 1, false);
+
+    push(this.add.text(x + W / 2, y + 20, "SMG4", {
+      fontSize: "15px", color: "#66aaff", fontStyle: "bold", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    push(this.add.text(x + W / 2, y + 48, "\"We have all the clues!\nWho do you think it is?\"", {
+      fontSize: "15px", color: "#ffffff", align: "center",
+      stroke: "#000", strokeThickness: 2,
+      wordWrap: { width: W - 60 },
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    push(this.add.text(x + W / 2, y + 122, "Type your answer and press ENTER:", {
+      fontSize: "11px", color: "#aaaacc",
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    // Input field
+    const ib = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    ib.fillStyle(0x0a0a22).fillRoundedRect(x + 40, y + 144, W - 80, 36, 6);
+    ib.lineStyle(2, 0x6666ff).strokeRoundedRect(x + 40, y + 144, W - 80, 36, 6);
+
+    this.guessTextObj = push(this.add.text(x + 52, y + 154, "_", {
+      fontSize: "17px", color: "#ffffff",
+    }).setScrollFactor(0).setDepth(D + 2));
+
+    // Keyboard listener using window so all keys are captured
+    this.guessKeyHandler = (event: KeyboardEvent) => {
+      if (!this.guessingActive) return;
+      if (event.key === "Enter") {
+        this.checkGuess();
+      } else if (event.key === "Backspace") {
+        this.guessText = this.guessText.slice(0, -1);
+        this.guessTextObj?.setText((this.guessText || "") + "_");
+      } else if (event.key.length === 1 && this.guessText.length < 20) {
+        this.guessText += event.key;
+        this.guessTextObj?.setText(this.guessText + "_");
+      }
+    };
+    window.addEventListener("keydown", this.guessKeyHandler);
+  }
+
+  private checkGuess() {
+    if (this.guessText.trim().toLowerCase() === "mario") {
+      this.closeGuessPrompt();
+      // SMG4's incredulous reaction
+      this.showPersonDialogue(
+        "SMG4: Mario, you made me live through a war…\njust to get to THE MOST OBVIOUS CONCLUSION POSSIBLE?!",
+        "#ffcc44", 5000
+      );
+      // Mario's reply
+      this.time.delayedCall(5500, () => {
+        this.showPersonDialogue("Mario: Yeah.", "#ff4422", 2200);
+      });
+      // Fade out and return to theater
+      this.time.delayedCall(8000, () => {
+        this.cameras.main.fadeOut(1500, 0, 0, 0);
+        this.cameras.main.once("camerafadeoutcomplete", () => {
+          this.scene.start("GameScene", {
+            character: this.character,
+            worldId: 0,
+            fromWorld: 9,
+          });
+        });
+      });
+    } else {
+      // Wrong — let them try again
+      this.guessText = "";
+      this.guessTextObj?.setText("_");
+      this.showPersonDialogue("SMG4: Hmm, that doesn't seem right...\nTry again!", "#ff8844", 2200);
+    }
+  }
+
+  private closeGuessPrompt() {
+    this.guessingActive = false;
+    this.guessText      = "";
+    if (this.guessKeyHandler) {
+      window.removeEventListener("keydown", this.guessKeyHandler);
+      this.guessKeyHandler = null;
+    }
+    this.guessPromptObjs.forEach(o => o.destroy());
+    this.guessPromptObjs = [];
+    this.guessTextObj    = null;
   }
 
   // ── Painting smoke animation ─────────────────────────────────────────────────
@@ -4267,5 +4783,92 @@ export class GameScene extends Phaser.Scene {
     g.fillRect(sx + 2, BY - 20, 10, 20);
     g.fillStyle(0x111111); g.fillRect(sx - 14, BY - 6, 12, 6);
     g.fillRect(sx + 2, BY - 6, 12, 6);
+  }
+
+  private drawMeggyNpc(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    // Meggy the Landmine — same height as Mario player sprite (~42 px tall)
+    // Uses direct-coordinate style matching Chris / Swag NPCs
+    const BY = baseY;
+    // Orange hair (wide mass above head)
+    g.fillStyle(0xff6600); g.fillEllipse(cx, BY - 50, 30, 18);
+    g.fillStyle(0xff5500); g.fillRect(cx - 12, BY - 46, 5, 20); // left strand
+    g.fillRect(cx + 7, BY - 46, 5, 20);                          // right strand
+    g.fillStyle(0xff8833); g.fillRect(cx - 5, BY - 57, 10, 10); // top highlight
+    // Goggles (two small circles on forehead)
+    g.fillStyle(0x333344); g.fillCircle(cx - 5, BY - 46, 4); g.fillCircle(cx + 5, BY - 46, 4);
+    g.fillStyle(0x558899); g.fillCircle(cx - 5, BY - 46, 2); g.fillCircle(cx + 5, BY - 46, 2);
+    g.fillStyle(0x555566); g.fillRect(cx - 1, BY - 48, 2, 4); // goggle bridge
+    // Skin face
+    g.fillStyle(0xffcc88); g.fillRect(cx - 9, BY - 42, 18, 14);
+    // Reddish-pink Inkling eyes
+    g.fillStyle(0xcc4466); g.fillRect(cx - 6, BY - 39, 4, 4); g.fillRect(cx + 2, BY - 39, 4, 4);
+    g.fillStyle(0xffffff); g.fillRect(cx - 5, BY - 40, 2, 2); g.fillRect(cx + 3, BY - 40, 2, 2);
+    // Red crimson jacket
+    g.fillStyle(0xcc2244); g.fillRect(cx - 11, BY - 28, 22, 22);
+    g.fillStyle(0xee3355); g.fillRect(cx - 4, BY - 28, 8, 5); // collar
+    // Landmine disc (compact, held in front)
+    g.fillStyle(0x888844); g.fillCircle(cx, BY - 18, 10);
+    g.fillStyle(0x9a9a55); g.fillCircle(cx, BY - 18, 8);
+    g.fillStyle(0x555522); g.fillRect(cx - 8, BY - 19, 16, 2); g.fillRect(cx - 1, BY - 25, 2, 14);
+    g.fillStyle(0xffcc00); g.fillCircle(cx - 6, BY - 18, 2); g.fillCircle(cx + 6, BY - 18, 2);
+    g.fillStyle(0x111100); g.fillCircle(cx, BY - 18, 2); // trigger
+    // Arms (jacket sleeves)
+    g.fillStyle(0xcc2244); g.fillRect(cx - 16, BY - 26, 6, 12); g.fillRect(cx + 10, BY - 26, 6, 12);
+    g.fillStyle(0xffffff); g.fillCircle(cx - 13, BY - 15, 4); g.fillCircle(cx + 13, BY - 15, 4); // gloves
+    // Legs
+    g.fillStyle(0x222233); g.fillRect(cx - 8, BY - 6, 6, 6); g.fillRect(cx + 2, BY - 6, 6, 6);
+    // Boots
+    g.fillStyle(0x111122); g.fillRect(cx - 10, BY - 2, 9, 2); g.fillRect(cx + 1, BY - 2, 9, 2);
+  }
+
+  private drawShroomyNpc(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    // Shroomy — big red mushroom cap, army hat, tan face+body, orange ascot
+    const scale = 2.6;
+    const ox = cx - Math.round(21 * scale);
+    const oy = baseY - Math.round(52 * scale);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * scale, oy + y * scale, w * scale, h * scale);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * scale, oy + y * scale, rad * scale);
+    };
+    // Army green beret (top)
+    r(10,  0, 22,  6, 0x4a5518);
+    r( 6,  4, 30,  4, 0x4a5518);
+    r( 4,  7, 34,  3, 0x3a4410);  // brim
+    r( 6,  6, 30,  2, 0xddbb00);  // yellow band
+    // Red mushroom cap (very wide)
+    r( 0,  8, 42, 16, 0xcc2200);
+    r( 4, 10, 16,  5, 0xee3311);  // highlight
+    ci( 8, 14,  4, 0xffffff);     // white spots
+    ci(22, 13,  5, 0xffffff);
+    ci(36, 15,  3, 0xffffff);
+    // Cap underside gills
+    r( 5, 23, 32,  3, 0xddbbaa);
+    // Tan face (mushroom stem)
+    r(11, 22, 20, 14, 0xd4a46a);
+    ci(13, 30,  2, 0xee8866);     // blush
+    ci(29, 30,  2, 0xee8866);
+    // Eyes
+    r(14, 26,  3,  4, 0x111100);
+    r(25, 26,  3,  4, 0x111100);
+    // Gap teeth grin
+    r(12, 32, 18,  2, 0x332200);  // mouth
+    r(14, 32,  4,  4, 0xffffff);  // left tooth
+    r(24, 32,  4,  4, 0xffffff);  // right tooth
+    r(19, 32,  5,  4, 0x331100);  // gap
+    // Tan body
+    r( 9, 36, 24, 12, 0xd4a46a);
+    // Orange ascot
+    r(14, 34, 14,  6, 0xff8822);
+    ci(21, 37,  4, 0xee6600);     // ascot knot
+    ci(17, 35,  2, 0xddaaee);     // polka dots
+    ci(25, 35,  2, 0x88ccee);
+    // Short legs
+    r(11, 46,  8,  5, 0xd4a46a);
+    r(23, 46,  8,  5, 0xd4a46a);
+    // Brown boots
+    r( 8, 46, 12,  8, 0x5a2e0a);
+    r(22, 46, 12,  8, 0x5a2e0a);
   }
 }
