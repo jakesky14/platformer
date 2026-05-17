@@ -37,6 +37,7 @@ const CHAR_STATS: Record<string, CharStats> = {
   melony:    { speed: 240, jumpVel: -420, jumpHold:  90, jumpHoldF: 25, flutter: false, float: false },
   mrpuzzles: { speed: 240, jumpVel: -420, jumpHold:  90, jumpHoldF: 25, flutter: false, float: false },
   mrwpnz:    { speed: 240, jumpVel: -420, jumpHold:  90, jumpHoldF: 25, flutter: false, float: false },
+  deermario: { speed: 210, jumpVel: -400, jumpHold:  85, jumpHoldF: 22, flutter: false, float: false },
 };
 
 const LEVEL_W    = 1920;
@@ -82,6 +83,41 @@ const W1_SHROOMY_TOWER_X = 10700;   // tower left edge x  (WLX+4700)
 // painting position in bedroom (lowered for accessibility)
 const W1_WP_CX = 4720;             // painting center x
 const W1_WP_TY = GROUND_TOP - 210; // painting top y (470)
+
+// ── World 10: Deer Mario's Forest ────────────────────────────────────────────
+const W10_TOTAL_W    = 6500;
+const W10_FL         = GROUND_TOP;
+const W10_SPAWN_X    = 120;
+const W10_GIANT_TREE_X = 1500;
+const W10_CAMPSITE_X = 3700;
+const W10_LOG1_X     = 3720;
+const W10_LOG2_X     = 3950;
+const W10_LOG3_X     = 4200;
+const W10_LOG_W      = 150;
+const W10_LOG_H      = 75;   // ~same as war-zone building height
+const W10_GUN_X      = 4480;
+const W10_SWAG_X     = 4750;
+const W10_FASHION_X  = 5550;
+const W10_FASHION_W  = 700;
+const W10_LEAF_COUNT = 5;
+const W10_CLOTH_COUNT = 30;
+// River x-ranges (used in background, physics, and water-death check)
+const W10_RIVERS: [number, number][] = [[250,550],[750,1100],[1800,2200],[2500,2900],[3200,3600]];
+// ── World 11: King Bob's Ball (Castle) ────────────────────────────────────────
+const W11_TOTAL_W   = 2400;
+const W11_FL        = GROUND_TOP;
+const W11_DOOR_X    = 2250;    // ballroom entrance trigger
+// ── World 12: Tower Prison ────────────────────────────────────────────────────
+const W12_TOTAL_W   = 960;
+const W12_FL        = GROUND_TOP;
+// ── World 13: Deer Mario's Village ───────────────────────────────────────────
+const W13_TOTAL_W   = 3200;
+const W13_FL        = GROUND_TOP;
+const W13_BOOPKINS_X = 2800;
+const W13_DOOR_X    = 3050;
+// ── World 14: Fairest Competition ────────────────────────────────────────────
+const W14_TOTAL_W   = 5000;   // long for autoscroller ch3
+const W14_FL        = GROUND_TOP;
 
 const GOOMBA_XS: number[] = [];
 const KOOPA_XS:  number[] = [];
@@ -133,6 +169,7 @@ const CHAR_COLORS: Record<string, { cap: number; shirt: number; pants: number; s
   melony:    { cap: 0x33bb55, shirt: 0x222222, pants: 0x222222, skin: 0xeeccaa },
   mrpuzzles: { cap: 0x888888, shirt: 0xffffff, pants: 0x111111, skin: 0xbbbbbb },
   mrwpnz:    { cap: 0x1a1a2a, shirt: 0x1a1a2a, pants: 0x222233, skin: 0x334455 },
+  deermario: { cap: 0xdd2200, shirt: 0x8b4513, pants: 0x7a3a10, skin: 0xffcc88 },
 };
 
 export class GameScene extends Phaser.Scene {
@@ -236,8 +273,63 @@ export class GameScene extends Phaser.Scene {
   private pipeInspected       = false;
   private mysteriesComplete   = false;
   private onceUponObjs: Phaser.GameObjects.GameObject[] = [];
+  private onceUponSkippable = false;
+  private onceUponSkipped   = false;
   private testingMode         = false;
   private testBarObjs: Phaser.GameObjects.GameObject[] = [];
+  // Deer Mario world (worldId 10)
+  private dressCharacter   = "mario";
+  private deerLeafCount    = 0;
+  private deerHasGun       = false;
+  private deerSwagHp       = 5;
+  private deerSwagDefeated = false;
+  private deerFashionCount = 0;
+  private deerComplete     = false;
+  private deerSwagGfx:     Phaser.GameObjects.Graphics | null = null;
+  private deerGunGfx:      Phaser.GameObjects.Graphics | null = null;
+  private deerBullet:      Phaser.Physics.Arcade.Sprite | null = null;
+  private deerBombGroup:   Phaser.Physics.Arcade.Group | null = null;
+  private deerLeafObjs:    { gfx: Phaser.GameObjects.Graphics; collected: boolean; x: number; y: number }[] = [];
+  private deerClothingObjs: { gfx: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text | null; collected: boolean }[] = [];
+  private deerBarrageActive      = false;
+  private deerBarrageStarted     = false;
+  private deerLastBarrageActive: boolean | null = null;
+  private deerBarrageWarningGfx:  Phaser.GameObjects.Graphics | null = null;
+  private deerBarrageWarningText: Phaser.GameObjects.Text | null = null;
+  private deerBarrageFlashEvent:  Phaser.Time.TimerEvent | null = null;
+  private deerSwagBombTimer:      Phaser.Time.TimerEvent | null = null;
+  private deerFashionBombTimer:   Phaser.Time.TimerEvent | null = null;
+  private deerLogGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
+  private deerFallingPlatforms: Phaser.Physics.Arcade.Sprite[] = [];
+  private deerMovingPlatforms:  Phaser.Physics.Arcade.Sprite[]  = [];
+  private deerFallGroup:  Phaser.Physics.Arcade.StaticGroup | null = null;
+  private deerMoveGroup:  Phaser.Physics.Arcade.StaticGroup | null = null;
+  private deerExitDoorGfx: Phaser.GameObjects.Graphics | null = null;
+  // World 11 (castle / ball)
+  private castleObjs:         Phaser.GameObjects.GameObject[] = [];
+  private castleCutsceneDone  = false;
+  private appleChoiceMade     = false;
+  private towerDialogueDone   = false;
+  private villageBoopkinsGreeted = false;
+  private villageExitUsed        = false;
+  // Challenge world (14)
+  private challengePhase   = 1;    // 1, 2, or 3
+  private challengeWins    = 0;
+  private challengeLosses  = 0;
+  private frogMeter        = 0;    // 0–100
+  private frogHops         = 0;    // frog escape count (3 = fail)
+  private lastLeftTapTime  = 0;
+  private autoScrollDone   = false;
+  private scrollTimer      = 0;
+  private challengeObjs: Phaser.GameObjects.GameObject[] = [];
+  private ch3WallGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
+  private challengeResolved = false;
+  private typeBoxText      = "";
+  private typeBoxObj: Phaser.GameObjects.Text | null = null;
+  private typeBoxHandler: ((e: KeyboardEvent) => void) | null = null;
+  private ch3CarX          = 0;
+  private ch3BombGroup: Phaser.Physics.Arcade.Group | null = null;
+  private ch3Obstacles: number[] = [];  // world-x positions of walls
   // Mr. Puzzles + inventory + pipe
   private carrotsSmashed    = false;
   private cucumbersSmashed  = false;
@@ -275,10 +367,13 @@ export class GameScene extends Phaser.Scene {
   preload() {
     this.textures.remove("marios-mysteries");
     this.load.image("marios-mysteries", "/marios-mysteries.jpg");
+    this.textures.remove("once-upon-smg4-img");
+    this.load.image("once-upon-smg4-img", "/once-upon-smg4.jpg");
   }
 
-  init(data: { character?: string; worldId?: number; fromWorld?: number }) {
-    this.character = data?.character ?? "mario";
+  init(data: { character?: string; worldId?: number; fromWorld?: number; dressCharacter?: string }) {
+    this.character      = data?.character      ?? "mario";
+    this.dressCharacter = data?.dressCharacter ?? this.character;
     this.worldId   = data?.worldId   ?? 0;
     this.fromWorld = data?.fromWorld ?? -1;
     this.stats     = CHAR_STATS[this.character] ?? CHAR_STATS.mario;
@@ -372,6 +467,8 @@ export class GameScene extends Phaser.Scene {
     this.lastBarrageActive   = null;
     this.barrageFlashEvent   = null;
     this.onceUponObjs        = [];
+    this.onceUponSkippable    = false;
+    this.onceUponSkipped      = false;
     this.testBarObjs         = [];
     this.boopkinsKeyGiven    = false;
     this.endingTriggered     = false;
@@ -383,13 +480,69 @@ export class GameScene extends Phaser.Scene {
       window.removeEventListener("keydown", this.guessKeyHandler);
       this.guessKeyHandler = null;
     }
+    // Deer world state
+    this.deerLeafCount          = 0;
+    this.deerHasGun             = false;
+    this.deerSwagHp             = 5;
+    this.deerSwagDefeated       = false;
+    this.deerFashionCount       = 0;
+    this.deerComplete           = false;
+    this.deerSwagGfx            = null;
+    this.deerGunGfx             = null;
+    this.deerBullet             = null;
+    this.deerBombGroup          = null;
+    this.deerLeafObjs           = [];
+    this.deerClothingObjs       = [];
+    this.deerBarrageActive      = false;
+    this.deerBarrageStarted     = false;
+    this.deerLastBarrageActive  = null;
+    this.deerBarrageWarningGfx  = null;
+    this.deerBarrageWarningText = null;
+    this.deerBarrageFlashEvent  = null;
+    this.deerSwagBombTimer      = null;
+    this.deerFashionBombTimer   = null;
+    this.deerLogGroup           = null;
+    this.deerFallingPlatforms = [];
+    this.deerMovingPlatforms  = [];
+    this.deerFallGroup  = null;
+    this.deerMoveGroup  = null;
+    this.deerExitDoorGfx = null;
+    this.castleObjs        = [];
+    this.castleCutsceneDone= false;
+    this.appleChoiceMade   = false;
+    this.towerDialogueDone = false;
+    this.villageBoopkinsGreeted = false;
+    this.villageExitUsed        = false;
+    this.challengePhase         = 1;
+    this.challengeWins          = 0;
+    this.challengeLosses        = 0;
+    this.frogMeter              = 0;
+    this.frogHops               = 0;
+    this.lastLeftTapTime        = 0;
+    this.autoScrollDone         = false;
+    this.scrollTimer            = 0;
+    this.challengeObjs          = [];
+    this.ch3WallGroup    = null;
+    this.challengeResolved = false;
+    this.typeBoxText            = "";
+    this.typeBoxObj             = null;
+    this.typeBoxHandler         = null;
+    this.ch3CarX                = 0;
+    this.ch3BombGroup           = null;
+    this.ch3Obstacles           = [];
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
 
   create() {
     this.generateTextures();
-    const physW = this.worldId === 9 ? W1_TOTAL_W : LEVEL_W;
+    const physW = this.worldId === 9  ? W1_TOTAL_W
+                : this.worldId === 10 ? W10_TOTAL_W
+                : this.worldId === 11 ? W11_TOTAL_W
+                : this.worldId === 12 ? W12_TOTAL_W
+                : this.worldId === 13 ? W13_TOTAL_W
+                : this.worldId === 14 ? W14_TOTAL_W
+                : LEVEL_W;
     this.physics.world.setBounds(0, 0, physW, LEVEL_H);
 
     if (this.worldId === 0) {
@@ -398,7 +551,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.buildWorldBackground();
       this.buildWorldLevel(); // for worldId 8, calls buildReturnTV() internally
-      if (this.worldId !== 8 && this.worldId !== 9) this.buildReturnTV();
+      if (this.worldId !== 8 && this.worldId !== 9 && this.worldId !== 10 && this.worldId !== 11 && this.worldId !== 12 && this.worldId !== 13 && this.worldId !== 14) this.buildReturnTV();
     }
 
     this.buildPlayer();
@@ -411,6 +564,29 @@ export class GameScene extends Phaser.Scene {
       this.buildHouseCutscene();
       this.startPaintingSmoke();
       this.setupWarZone();
+    }
+    if (this.worldId === 10) {
+      this.cameras.main.setBackgroundColor(0x000000);
+      this.cameras.main.fadeIn(500, 0, 0, 0);
+      this.setupDeerWorld();
+    }
+    if (this.worldId === 11) {
+      this.cameras.main.setBackgroundColor(0x88ccff);
+      this.cameras.main.fadeIn(600, 0, 0, 0);
+    }
+    if (this.worldId === 12) {
+      this.cameras.main.setBackgroundColor(0x111111);
+      this.cameras.main.fadeIn(600, 0, 0, 0);
+    }
+    if (this.worldId === 13 || this.worldId === 14) {
+      this.cameras.main.setBackgroundColor(0x000000);
+      this.cameras.main.fadeIn(500, 0, 0, 0);
+    }
+    if (this.worldId === 14) {
+      this.time.delayedCall(800, () => this.setupChallengeWorld());
+    }
+    if (this.worldId === 0 && this.fromWorld === 10) {
+      this.time.delayedCall(700, () => this.startDressCutscene());
     }
   }
 
@@ -443,7 +619,49 @@ export class GameScene extends Phaser.Scene {
       if (this.textures.exists(k)) this.textures.remove(k);
     }
 
-    if (this.character === "toadette") {
+    if (this.character === "deermario") {
+      this.textures.addCanvas("player", this.makeCanvas(36, 42, ctx => {
+        // Stub antlers
+        ctx.fillStyle = "#7a4a1a";
+        ctx.fillRect(6, 0, 3, 8); ctx.fillRect(4, 2, 3, 3);  // left antler
+        ctx.fillRect(27, 0, 3, 8); ctx.fillRect(29, 2, 3, 3); // right antler
+        // Red cap
+        ctx.fillStyle = "#dd2200"; ctx.fillRect(5, 7, 26, 7);
+        ctx.fillRect(2, 12, 32, 3);
+        // M badge
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(12, 8, 12, 5);
+        ctx.fillStyle = "#dd2200";
+        ctx.fillRect(13, 9, 2, 3); ctx.fillRect(17, 9, 2, 3); ctx.fillRect(15, 9, 2, 2);
+        // Hair
+        ctx.fillStyle = "#221100"; ctx.fillRect(4, 14, 28, 3);
+        // Face
+        ctx.fillStyle = "#ffcc88"; ctx.fillRect(6, 15, 24, 9);
+        // Eyes
+        ctx.fillStyle = "#222222";
+        ctx.beginPath(); ctx.arc(12, 19, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(24, 19, 2, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(11, 18, 1, 1); ctx.fillRect(23, 18, 1, 1);
+        // Mustache
+        ctx.fillStyle = "#6b3a1f"; ctx.fillRect(11, 22, 14, 2);
+        // Deer body
+        ctx.fillStyle = "#8b4513"; ctx.fillRect(4, 26, 28, 13);
+        // White spots
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath(); ctx.arc(12, 31, 2.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(20, 28, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(27, 32, 2, 0, Math.PI*2); ctx.fill();
+        // Legs
+        ctx.fillStyle = "#7a3a10";
+        ctx.fillRect(7, 37, 4, 5); ctx.fillRect(14, 37, 4, 5);
+        ctx.fillRect(21, 37, 4, 5); ctx.fillRect(28, 37, 4, 5);
+        // Hooves
+        ctx.fillStyle = "#333333";
+        ctx.fillRect(7, 40, 4, 2); ctx.fillRect(14, 40, 4, 2);
+        ctx.fillRect(21, 40, 4, 2); ctx.fillRect(28, 40, 4, 2);
+        // Tail
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(32, 27, 4, 4);
+      }));
+    } else if (this.character === "toadette") {
       this.textures.addCanvas("player", this.makeCanvas(36, 42, ctx => {
         // Pink pigtail pom-poms
         ctx.fillStyle = "#ff88cc";
@@ -1214,48 +1432,18 @@ export class GameScene extends Phaser.Scene {
       ctx.fillStyle = "#000"; ctx.fillRect(8, 39, 9, 3); ctx.fillRect(19, 39, 9, 3);
     }));
 
-    // ── Once Upon an SMG4 TV thumbnail ──────────────────────────────────────
-    this.textures.addCanvas("once-upon-smg4", this.makeCanvas(TV_SW, TV_SH, ctx => {
-      // Night sky
-      ctx.fillStyle = "#06021a"; ctx.fillRect(0, 0, TV_SW, TV_SH);
-      // Stars
-      ctx.fillStyle = "rgba(255,255,255,0.9)";
-      [[20,5],[38,9],[60,4],[82,7],[100,11],[118,5],[28,14],[50,3],[73,14],[110,3]].forEach(([sx,sy]) => {
-        ctx.fillRect(sx, sy, 1, 1);
-      });
-      // Crescent moon (top-right)
-      ctx.fillStyle = "rgba(220,215,180,0.85)";
-      ctx.beginPath(); ctx.arc(118, 13, 10, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "#06021a";
-      ctx.beginPath(); ctx.arc(121, 11, 8, 0, Math.PI*2); ctx.fill();
-      // Forest silhouettes – left trees
-      ctx.fillStyle = "#050f02";
-      ctx.beginPath(); ctx.moveTo(0,86); ctx.lineTo(0,46); ctx.lineTo(14,22); ctx.lineTo(28,46); ctx.lineTo(28,86); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(15,86); ctx.lineTo(15,56); ctx.lineTo(26,36); ctx.lineTo(37,56); ctx.lineTo(37,86); ctx.closePath(); ctx.fill();
-      // Forest silhouettes – right trees
-      ctx.beginPath(); ctx.moveTo(136,86); ctx.lineTo(136,44); ctx.lineTo(122,20); ctx.lineTo(108,44); ctx.lineTo(108,86); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(120,86); ctx.lineTo(120,52); ctx.lineTo(107,30); ctx.lineTo(94,52); ctx.lineTo(94,86); ctx.closePath(); ctx.fill();
-      // Ground
-      ctx.fillStyle = "#040a02"; ctx.fillRect(0, 66, TV_SW, 20);
-      // Glow behind title
-      ctx.fillStyle = "rgba(80,40,140,0.35)";
-      ctx.beginPath(); ctx.ellipse(68, 40, 55, 28, 0, 0, Math.PI*2); ctx.fill();
-      // Title
-      ctx.textAlign = "center"; ctx.textBaseline = "top";
-      ctx.font = "italic 7px serif"; ctx.fillStyle = "#ccbb55";
-      ctx.fillText("Once Upon an", 68, 21);
-      ctx.font = "bold 13px sans-serif";
-      ctx.fillStyle = "#ffe044";
-      ctx.shadowColor = "#cc8800"; ctx.shadowBlur = 6;
-      ctx.fillText("SMG4", 68, 31);
-      ctx.shadowBlur = 0;
-      // Mini Mr. Puzzles silhouette bottom-center
-      ctx.fillStyle = "#1a1a2a";
-      ctx.fillRect(61, 55, 14, 9);  // TV head box
-      ctx.fillRect(63, 49, 10, 7);  // upper TV section
-      ctx.fillRect(67, 47, 2, 3);   // antenna rod
-      ctx.fillStyle = "#ffdd00"; ctx.fillRect(67, 46, 2, 2); // antenna ball
-    }));
+    // ── Once Upon an SMG4 — center-crop real image to fit TV screen ──────────
+    if (this.textures.exists("once-upon-smg4-img")) {
+      const srcImg = this.textures.get("once-upon-smg4-img").source[0].image as HTMLImageElement;
+      this.textures.addCanvas("once-upon-smg4", this.makeCanvas(TV_SW, TV_SH, ctx => {
+        const srcW = srcImg.naturalWidth;
+        const srcH = srcImg.naturalHeight;
+        const scale = Math.max(TV_SW / srcW, TV_SH / srcH);
+        const drawW = srcW * scale;
+        const drawH = srcH * scale;
+        ctx.drawImage(srcImg, (TV_SW - drawW) / 2, (TV_SH - drawH) / 2, drawW, drawH);
+      }));
+    }
 
     // Goomba 32×28
     this.textures.addCanvas("goomba", this.makeCanvas(32, 28, ctx => {
@@ -1289,6 +1477,35 @@ export class GameScene extends Phaser.Scene {
     }));
 
 
+    // Deer world textures
+    this.textures.addCanvas("deer-plank", this.makeCanvas(64, 16, ctx => {
+      ctx.fillStyle = "#8B5A2B"; ctx.fillRect(0, 0, 64, 16);
+      ctx.fillStyle = "#6B3A0F"; ctx.fillRect(0, 0, 64, 2);
+      ctx.fillStyle = "#9A6030"; ctx.fillRect(0, 13, 64, 3);
+      ctx.fillStyle = "#5A2D08";
+      for (let wx = 0; wx < 64; wx += 14) {
+        ctx.fillRect(wx, 3, 1, 10); ctx.fillRect(wx + 7, 5, 1, 6);
+      }
+    }));
+    this.textures.addCanvas("deer-gun", this.makeCanvas(22, 12, ctx => {
+      ctx.fillStyle = "#555555"; ctx.fillRect(0, 4, 16, 6);
+      ctx.fillStyle = "#333333"; ctx.fillRect(10, 0, 5, 5);
+      ctx.fillStyle = "#666666"; ctx.fillRect(16, 5, 6, 4);
+      ctx.fillStyle = "#222222"; ctx.fillRect(0, 9, 4, 3);
+    }));
+    this.textures.addCanvas("deer-bomb", this.makeCanvas(18, 18, ctx => {
+      ctx.fillStyle = "#222222";
+      ctx.beginPath(); ctx.arc(9, 11, 7, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#444444"; ctx.fillRect(8, 3, 3, 6);
+      ctx.fillStyle = "#ff8800"; ctx.fillRect(7, 1, 5, 4);
+      ctx.fillStyle = "#ffdd44"; ctx.fillRect(9, 0, 2, 3);
+    }));
+    this.textures.addCanvas("deer-bullet", this.makeCanvas(12, 6, ctx => {
+      ctx.fillStyle = "#ffdd44";
+      ctx.beginPath(); ctx.ellipse(6, 3, 6, 3, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#ff8800";
+      ctx.beginPath(); ctx.arc(10, 3, 2, 0, Math.PI*2); ctx.fill();
+    }));
     // Mario's Mysteries — center-crop to fit TV screen (object-fit: cover)
     if (this.textures.exists("marios-mysteries")) {
       const srcImg = this.textures.get("marios-mysteries").source[0].image as HTMLImageElement;
@@ -1431,6 +1648,27 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── Once Upon cutscene skip ───────────────────────────────────────────────
+    if (this.onceUponSkippable && !this.onceUponSkipped &&
+        (Phaser.Input.Keyboard.JustDown(this.keyZ) || Phaser.Input.Keyboard.JustDown(this.keyW) ||
+         Phaser.Input.Keyboard.JustDown(this.cursors.space!))) {
+      this.onceUponSkipped = true;
+      this.onceUponSkippable = false;
+      this.time.removeAllEvents();
+      this.onceUponObjs.forEach(o => o.destroy());
+      this.onceUponObjs = [];
+      this.cameras.main.fadeOut(600, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.scene.start("GameScene", {
+          character: "deermario",
+          worldId: 10,
+          fromWorld: 0,
+          dressCharacter: this.character,
+        });
+      });
+      return;
+    }
+
     // ── Yoshi tongue / spit ──────────────────────────────────────────────────
     // zConsumed prevents Z from triggering both Yoshi actions AND World 9 interactions
     let zConsumed = false;
@@ -1531,6 +1769,216 @@ export class GameScene extends Phaser.Scene {
           this.addClue("Mushroom — a meatball was hidden on Shroomy's head!");
           this.showDialogue("Found a meatball on Shroomy's head!\nFinal clue: MUSHROOM", "#ffcc44", 4500);
           this.time.delayedCall(800, () => this.showSmg4CluePopup("THE FINAL CLUE!"));
+        }
+      }
+    }
+
+    // ── World 10 Z interactions (deer forest) ────────────────────────────────
+    if (this.worldId === 10 && !zConsumed && Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+      const px = this.player.x, py = this.player.y;
+
+      // Leaf picking near giant tree
+      if (!this.deerSwagDefeated && this.deerLeafCount < W10_LEAF_COUNT) {
+        const nearTree = Math.abs(px - W10_GIANT_TREE_X) < 140 && py < W10_FL - 80;
+        if (nearTree) {
+          const leaf = this.deerLeafObjs.find(l => !l.collected && Math.abs(px - l.x) < 80 && Math.abs(py - l.y) < 100);
+          if (leaf) {
+            leaf.collected = true;
+            leaf.gfx.destroy();
+            this.deerLeafCount++;
+            this.showDialogue(`Leaf collected! (${this.deerLeafCount}/${W10_LEAF_COUNT})`, "#aaff44", 1800);
+            if (this.deerLeafCount >= W10_LEAF_COUNT) {
+              this.showDialogue("All leaves collected! Now find Swagmaster at the campsite.", "#88ffaa", 3000);
+            }
+          } else if (this.deerLeafCount === 0) {
+            this.showDialogue("Jump up into the tree branches to pick leaves!", "#aaff44", 2000);
+          }
+        }
+      }
+
+      // Gun pickup
+      else if (!this.deerHasGun && this.deerLeafCount >= W10_LEAF_COUNT &&
+               Math.abs(px - W10_GUN_X) < 60 && py > W10_FL - 80) {
+        this.deerHasGun = true;
+        this.deerGunGfx?.destroy();
+        this.deerGunGfx = null;
+        this.showDialogue("You found a gun! Press Z near Swagmaster to shoot him!", "#ffcc44", 3000);
+      }
+
+      // Shoot Swagmaster
+      else if (this.deerHasGun && !this.deerSwagDefeated &&
+               Math.abs(px - W10_SWAG_X) < 200 && !this.deerBullet) {
+        const bx = px < W10_SWAG_X ? px + 20 : px - 20;
+        const dir = px < W10_SWAG_X ? 1 : -1;
+        const bSprite = this.physics.add.sprite(bx, py - 10, "deer-bullet");
+        bSprite.setDepth(5);
+        (bSprite.body as Phaser.Physics.Arcade.Body).setAllowGravity(false).setVelocityX(dir * 500);
+        this.deerBullet = bSprite;
+      }
+
+      // Fashion store: collect clothing item
+      else if (this.deerSwagDefeated && !this.deerComplete && this.deerFashionCount < W10_CLOTH_COUNT) {
+        const nearItem = this.deerClothingObjs.find(c => {
+          if (c.collected) return false;
+          const cwx = (c.gfx as Phaser.GameObjects.Graphics & { _wx: number })._wx ?? 0;
+          const cwy = (c.gfx as Phaser.GameObjects.Graphics & { _wy: number })._wy ?? 0;
+          return Math.abs(px - cwx) < 50 && Math.abs(py - cwy) < 80;
+        });
+        if (nearItem) {
+          nearItem.collected = true;
+          nearItem.gfx.destroy();
+          nearItem.label?.destroy();
+          this.deerFashionCount++;
+          this.showDialogue(`Clothes stolen! (${this.deerFashionCount}/${W10_CLOTH_COUNT})`, "#ffaacc", 1200);
+          if (this.deerFashionCount >= W10_CLOTH_COUNT) {
+            this.showDialogue("ALL CLOTHES STOLEN! Find the exit door!", "#ffccee", 3000);
+            this.deerFashionBombTimer?.remove(false);
+            // Reveal exit door
+            if (this.deerExitDoorGfx) {
+              this.deerExitDoorGfx.setVisible(true);
+              (this.deerExitDoorGfx as Phaser.GameObjects.Graphics & { _label: Phaser.GameObjects.Text })._label?.setVisible(true);
+            }
+          }
+        }
+      }
+
+    }
+
+    // World 10 door exit — separate check (not chained to avoid else-if skip)
+    if (this.worldId === 10 && !this.deerComplete && this.deerFashionCount >= W10_CLOTH_COUNT &&
+        this.deerExitDoorGfx?.visible && Phaser.Input.Keyboard.JustDown(this.cursors.down!)) {
+      const doorX = (this.deerExitDoorGfx as Phaser.GameObjects.Graphics & { _doorX: number })._doorX ?? 0;
+      if (Math.abs(this.player.x - doorX) < 80) {
+        this.deerComplete = true;
+        this.cameras.main.fadeOut(600, 0, 0, 0);
+        this.cameras.main.once("camerafadeoutcomplete", () => {
+          this.scene.start("GameScene", {
+            character: this.dressCharacter,
+            worldId: 0,
+            fromWorld: 10,
+            dressCharacter: this.dressCharacter,
+          });
+        });
+      }
+    }
+
+    // ── World 11 castle: ballroom entrance trigger ────────────────────────────
+    if (this.worldId === 11 && !this.castleCutsceneDone && this.player.x >= W11_DOOR_X - 60) {
+      this.castleCutsceneDone = true;
+      this.startCastleCutscene();
+    }
+
+    // ── World 12 tower: Z near window to trigger help dialogue ────────────────
+    if (this.worldId === 12 && !this.towerDialogueDone && !this.dying) {
+      const WIN_X = 600; // center of window
+      if (Math.abs(this.player.x - WIN_X) < 80 && Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+        this.towerDialogueDone = true;
+        this.startTowerWindowCutscene();
+      }
+    }
+
+    // ── World 13 village: Boopkins Z-talk and DOWN exit ──────────────────────
+    if (this.worldId === 13 && !this.dying) {
+      const px = this.player.x;
+      // Boopkins talk
+      if (!this.villageBoopkinsGreeted && Math.abs(px - W13_BOOPKINS_X) < 80 &&
+          Phaser.Input.Keyboard.JustDown(this.keyZ)) {
+        this.villageBoopkinsGreeted = true;
+        this.showDialogue("Boopkins: Yes! I'll save the Princess!", "#88ff88", 3000);
+      }
+      // DOWN ARROW exit door
+      if (this.villageBoopkinsGreeted && !this.villageExitUsed &&
+          Math.abs(px - W13_DOOR_X) < 70 && Phaser.Input.Keyboard.JustDown(this.cursors.down!)) {
+        this.villageExitUsed = true;
+        this.cameras.main.fadeOut(600, 0, 0, 0);
+        this.cameras.main.once("camerafadeoutcomplete", () => {
+          this.scene.start("GameScene", {
+            character: this.dressCharacter,
+            worldId: 12,
+            fromWorld: 13,
+            dressCharacter: this.dressCharacter,
+          });
+        });
+      }
+    }
+
+    // ── Challenge world (14) update ───────────────────────────────────────────
+    if (this.worldId === 14 && !this.dying) {
+      // ── Challenge 2: frog tap mechanic ──
+      if (this.challengePhase === 2) {
+        type Ch2FrogG = Phaser.GameObjects.Graphics & {
+          _drawFrog: (x: number, y: number) => void;
+          _frogX: number; _frogY: number;
+          _updateMeter: () => void;
+          _hopLabel: Phaser.GameObjects.Text;
+        };
+        const frogG = (this as this & { _ch2FrogG: Ch2FrogG })._ch2FrogG;
+        if (frogG && Phaser.Input.Keyboard.JustDown(this.cursors.left!)) {
+          const now = this.time.now;
+          const MIN_INTERVAL = 650;
+          if (now - this.lastLeftTapTime < MIN_INTERVAL) {
+            // Too fast — frog hops!
+            this.frogHops++;
+            this.frogMeter = Math.max(0, this.frogMeter - 20);
+            const newFx = frogG._frogX + 120 + Math.random() * 80;
+            frogG._frogX = Math.min(newFx, 1100);
+            frogG._drawFrog(frogG._frogX, frogG._frogY);
+            frogG._hopLabel.setText(`Frog hopped! (${this.frogHops}/3)`).setColor("#ff4422");
+            if (this.frogHops >= 3) {
+              frogG._hopLabel.setText("The frog escaped! FAIL!");
+              this.time.delayedCall(1500, () => this.handleChallengeLoss());
+            }
+          } else {
+            this.frogMeter += 12;
+            frogG._updateMeter();
+            frogG._hopLabel.setText("").setColor("#88ff44");
+            if (this.frogMeter >= 100) {
+              frogG._hopLabel.setText("YOU KISSED THE FROG! WIN!").setColor("#ff88cc");
+              this.time.delayedCall(1500, () => this.handleChallengeWin(2));
+            }
+          }
+          this.lastLeftTapTime = now;
+        }
+      }
+
+      // ── Challenge 3: autoscroller ──
+      if (this.challengePhase === 3 && !this.autoScrollDone) {
+        this.scrollTimer += this.game.loop.delta;
+        const elapsed = this.scrollTimer / 1000;
+        const remaining = Math.max(0, 20 - elapsed);
+        const timerTxt = (this as this & { _ch3TimerTxt: Phaser.GameObjects.Text })._ch3TimerTxt;
+        timerTxt?.setText(`${remaining.toFixed(1)}s`);
+
+        // Auto-scroll camera
+        const scrollSpeed = 120; // px/s
+        const targetScrollX = elapsed * scrollSpeed;
+        this.cameras.main.scrollX = targetScrollX;
+
+        // Move car (chases from ~200px behind current camera right edge)
+        this.ch3CarX = targetScrollX + 1280 + 80;
+        const carG = (this as this & { _ch3CarG: Phaser.GameObjects.Graphics })._ch3CarG;
+        if (carG) {
+          carG.clear();
+          const cx = this.ch3CarX, cy = W14_FL - 30;
+          carG.fillStyle(0xcc2222); carG.fillRect(cx - 55, cy - 30, 110, 30);
+          carG.fillStyle(0xee3333); carG.fillRect(cx - 40, cy - 55, 80, 28);
+          carG.fillStyle(0x222222); carG.fillCircle(cx - 35, cy, 14); carG.fillCircle(cx + 35, cy, 14);
+          carG.fillStyle(0x888888); carG.fillCircle(cx - 35, cy, 8); carG.fillCircle(cx + 35, cy, 8);
+          // Draw Swag and Chris in car
+          this.drawSwagInCar(carG, cx - 15, cy - 38);
+        }
+
+        // If player falls behind camera
+        if (this.player.x < targetScrollX + 30) {
+          this.handleChallengeLoss();
+        }
+
+        // Win after 20s
+        if (elapsed >= 20 && !this.autoScrollDone) {
+          this.autoScrollDone = true;
+          timerTxt?.setText("0.0s");
+          this.showDialogue("You escaped! CHALLENGE 3 WIN!", "#ffdd44", 2500);
+          this.time.delayedCall(2500, () => this.handleChallengeWin(3));
         }
       }
     }
@@ -1637,6 +2085,128 @@ export class GameScene extends Phaser.Scene {
         this.lastBarrageActive = null;
         this.barrageWarningGfx?.setVisible(false);
         this.barrageWarningText?.setVisible(false);
+      }
+    }
+
+    // Moving platforms: sync static body to sine-wave position
+    if (this.worldId === 10 && !this.dying) {
+      for (const mp of this.deerMovingPlatforms) {
+        const mpExt = mp as Phaser.Physics.Arcade.Sprite & { _startX: number; _range: number; _offset: number };
+        mpExt.x = mpExt._startX + Math.sin(this.time.now * 0.0007 + mpExt._offset) * mpExt._range;
+        (mpExt.body as Phaser.Physics.Arcade.StaticBody).updateFromGameObject();
+      }
+    }
+
+    // Falling platforms: start timer when player stands on one, drop after 3s
+    if (this.worldId === 10 && !this.dying) {
+      for (const fp of this.deerFallingPlatforms) {
+        type FPType = Phaser.Physics.Arcade.Sprite & { _crackG: Phaser.GameObjects.Graphics; _fallTimer: Phaser.Time.TimerEvent | null; _falling: boolean };
+        const fpExt = fp as FPType;
+        if (fpExt._falling) continue;
+        const onTop = this.player.body!.blocked.down &&
+          Math.abs(this.player.x - fp.x) < fp.displayWidth / 2 + 10 &&
+          Math.abs(this.player.y - fp.y) < 28;
+        if (onTop && !fpExt._fallTimer) {
+          fpExt._fallTimer = this.time.delayedCall(3000, () => {
+            fpExt._falling = true;
+            fpExt._crackG.destroy();
+            (fpExt.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+            this.tweens.add({
+              targets: fpExt,
+              y: fpExt.y + 250,
+              alpha: 0,
+              duration: 700,
+              ease: "Quad.easeIn",
+              onComplete: () => fpExt.destroy(),
+            });
+          });
+        } else if (!onTop && fpExt._fallTimer && !fpExt._falling) {
+          fpExt._fallTimer.remove(false);
+          fpExt._fallTimer = null;
+        }
+      }
+    }
+
+    // ── Deer world water death (falling into rivers) ─────────────────────────
+    if (this.worldId === 10 && this.player.y >= W10_FL - 8) {
+      if (W10_RIVERS.some(([r1, r2]) => this.player.x >= r1 && this.player.x <= r2)) {
+        this.playerDie();
+      }
+    }
+
+    // ── Deer world barrage + bullet + bomb collisions ─────────────────────────
+    if (this.worldId === 10) {
+      // Barrage height-damage at campsite
+      if (!this.deerSwagDefeated && this.player.x >= W10_CAMPSITE_X) {
+        const dActive = this.deerBarrageActive;
+        if (dActive !== this.deerLastBarrageActive) {
+          this.deerLastBarrageActive = dActive;
+          const wg = this.deerBarrageWarningGfx;
+          if (wg) {
+            wg.clear();
+            if (dActive) {
+              wg.fillStyle(0xff1100, 0.28).fillRect(0, 0, 1280, 220);
+              wg.lineStyle(4, 0xff3300, 0.85).strokeRect(0, 0, 1280, 220);
+            } else {
+              wg.fillStyle(0xffcc00, 0.18).fillRect(0, 0, 1280, 220);
+              wg.lineStyle(4, 0xffdd00, 0.75).strokeRect(0, 0, 1280, 220);
+            }
+            wg.setVisible(true);
+          }
+          this.deerBarrageWarningText
+            ?.setColor(dActive ? "#ff4400" : "#ffdd00")
+            .setText(dActive ? "⚠  DANGER — STAY LOW!  ⚠" : "✓  SAFE — MOVE NOW!  ✓")
+            .setVisible(true);
+        }
+        // Damage if above log height
+        if (dActive && this.player.y < W10_FL - W10_LOG_H + 10) {
+          this.takeDamage();
+        }
+      } else if (this.deerBarrageWarningGfx?.visible) {
+        this.deerBarrageWarningGfx.setVisible(false);
+        this.deerBarrageWarningText?.setVisible(false);
+        this.deerLastBarrageActive = null;
+      }
+
+      // Deer bullet movement + Swag collision
+      if (this.deerBullet?.active) {
+        const db = this.deerBullet;
+        if (db.x < 0 || db.x > W10_TOTAL_W) { db.destroy(); this.deerBullet = null; }
+        else if (!this.deerSwagDefeated && Math.abs(db.x - W10_SWAG_X) < 40 && Math.abs(db.y - (W10_FL - 50)) < 80) {
+          db.destroy(); this.deerBullet = null;
+          this.deerSwagHp--;
+          const msgs = ["Ow!","Stop it!","You'll pay for that!","Getting serious now...","NOOO!"];
+          this.showDialogue(`Swag: ${msgs[Math.max(0, 5 - this.deerSwagHp - 1)] ?? "..."}`, "#ff8844", 2000);
+          if (this.deerSwagHp <= 0) {
+            this.deerSwagDefeated = true;
+            this.deerSwagGfx?.destroy(); this.deerSwagGfx = null;
+            this.deerSwagBombTimer?.remove(false); this.deerSwagBombTimer = null;
+            this.deerBarrageActive = false;
+            this.deerBarrageFlashEvent?.remove(false); this.deerBarrageFlashEvent = null;
+            this.deerBarrageWarningGfx?.setVisible(false);
+            this.deerBarrageWarningText?.setVisible(false);
+            this.showDialogue("Swagmaster defeated! Now rob the Fashion Store ahead!", "#ffcc44", 4000);
+            this.time.delayedCall(1500, () => {
+              this.deerFashionBombTimer = this.time.addEvent({
+                delay: 1800, loop: true, callback: () => this.spawnFashionBomb(),
+              });
+              this.buildFashionStore();
+            });
+          }
+        }
+      }
+
+      // Bomb hits player
+      if (this.deerBombGroup) {
+        this.deerBombGroup.getChildren().forEach(b => {
+          const bs = b as Phaser.Physics.Arcade.Sprite;
+          if (!bs.active) return;
+          if (bs.y > W10_FL + 20) { bs.destroy(); return; }
+          if (Math.abs(bs.x - this.player.x) < 30 && Math.abs(bs.y - this.player.y) < 30) {
+            bs.destroy();
+            this.takeDamage();
+          }
+        });
       }
     }
 
@@ -1989,6 +2559,25 @@ export class GameScene extends Phaser.Scene {
     this.koopas  = this.physics.add.group();
     this.shells  = this.physics.add.group();
 
+    if (this.worldId === 11 || this.worldId === 12 || this.worldId === 13 || this.worldId === 14) return;
+
+    if (this.worldId === 10) {
+      // Forest enemies — placed only on safe ground (away from river edges)
+      const goombaXs = [140, 640, 1200, 1420, 1700, 2260, 2400, 3020, 3100, 3680, 3950, 4250, 5400];
+      const koopaXs  = [180, 660, 1330, 1660, 2300, 3050, 3720, 4100, 5300];
+      for (const x of goombaXs) {
+        const g = this.goombas.create(x, W10_FL - 14, "goomba") as Phaser.Physics.Arcade.Sprite;
+        g.setCollideWorldBounds(false);
+        g.setVelocityX(-55);
+      }
+      for (const x of koopaXs) {
+        const k = this.koopas.create(x, W10_FL - 18, "koopa") as Phaser.Physics.Arcade.Sprite;
+        k.setCollideWorldBounds(false);
+        k.setVelocityX(-48);
+      }
+      return;
+    }
+
     for (const x of GOOMBA_XS) {
       const g = this.goombas.create(x, GROUND_TOP - 14, "goomba") as Phaser.Physics.Arcade.Sprite;
       g.setCollideWorldBounds(true);
@@ -2311,7 +2900,8 @@ export class GameScene extends Phaser.Scene {
     // When returning from a world, spawn near the TV the player came from
     let spawnX = 100;
     let spawnY = 600;
-    if (this.worldId === 9) spawnX = 960;              // house interior: spawn at purple door
+    if (this.worldId === 9) spawnX = 960;
+    else if (this.worldId === 10) spawnX = W10_SPAWN_X;
     else if (this.worldId === 8 && this.fromWorld === 9) {
       spawnX = 940; spawnY = 320;  // top of hill, in front of house door
     }
@@ -3276,6 +3866,182 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (this.worldId === 10) {
+      this.buildDeerForestBackground();
+      return;
+    }
+    if (this.worldId === 11) {
+      // Castle exterior — blue sky, stone towers
+      const g = this.add.graphics();
+      g.fillStyle(0x88ccff); g.fillRect(0, 0, W11_TOTAL_W, LEVEL_H);
+      // Clouds
+      g.fillStyle(0xffffff);
+      [[300,80,70,28],[800,55,90,32],[1400,70,65,25],[1900,60,80,30],[2200,85,55,22]].forEach(([cx,cy,rx,ry]) => {
+        g.fillEllipse(cx, cy, rx*2, ry*2);
+        g.fillEllipse(cx - rx*0.4, cy+10, rx*1.3, ry*1.5);
+        g.fillEllipse(cx + rx*0.4, cy+10, rx*1.3, ry*1.4);
+      });
+      // Distant castle background silhouette
+      g.fillStyle(0x8899bb);
+      g.fillRect(1800, 200, 600, 480); // main keep
+      g.fillRect(1780, 280, 40, 200); // left battlement
+      g.fillRect(2140, 280, 40, 200); // right battlement
+      g.fillRect(1870, 140, 100, 80); // top tower left
+      g.fillRect(2050, 120, 100, 100); // top tower right
+      g.fillStyle(0x6677aa);
+      // Battlements on top
+      for (let i = 0; i < 7; i++) { g.fillRect(1810 + i*46, 180, 28, 22); }
+      // Castle windows
+      g.fillStyle(0x223344);
+      g.fillRect(1870, 290, 30, 40); g.fillRect(2060, 270, 30, 40); g.fillRect(1965, 310, 30, 40);
+      // Stone bridge / moat
+      g.fillStyle(0x2255aa, 0.6); g.fillRect(0, W11_FL, W11_TOTAL_W, 40); // water
+      g.fillStyle(0xbbbbcc); g.fillRect(0, W11_FL - 8, W11_TOTAL_W, 8); // bridge top edge
+      g.fillStyle(0x999999); g.fillRect(0, W11_FL, W11_TOTAL_W, 40); // stone path
+      // Stone tile pattern on bridge
+      g.lineStyle(1, 0x777777, 0.4);
+      for (let bx = 0; bx < W11_TOTAL_W; bx += 80) {
+        for (let by = W11_FL; by < LEVEL_H; by += 40) {
+          g.strokeRect(bx + (by % 80 === 0 ? 0 : 40), by, 80, 40);
+        }
+      }
+      // Torch brackets on bridge walls
+      for (let tx = 200; tx < W11_TOTAL_W - 200; tx += 400) {
+        g.fillStyle(0x888888); g.fillRect(tx - 4, W11_FL - 70, 8, 70);
+        g.fillStyle(0xff8800, 0.9); g.fillTriangle(tx - 10, W11_FL - 70, tx + 10, W11_FL - 70, tx, W11_FL - 96);
+        g.fillStyle(0xffcc00, 0.7); g.fillTriangle(tx - 5, W11_FL - 73, tx + 5, W11_FL - 73, tx, W11_FL - 90);
+      }
+      return;
+    }
+
+    if (this.worldId === 12) {
+      const g = this.add.graphics();
+      g.fillStyle(0x0a0a14); g.fillRect(0, 0, W12_TOTAL_W, LEVEL_H);
+      // Stone wall blocks
+      for (let wy = 0; wy < LEVEL_H; wy += 40) {
+        for (let wx = 0; wx < W12_TOTAL_W; wx += 80) {
+          const stagger = wy % 80 === 0 ? 0 : 40;
+          g.fillStyle(0x16162a); g.fillRect(wx + stagger, wy, 79, 39);
+          g.lineStyle(1, 0x0a0a1e, 1); g.strokeRect(wx + stagger, wy, 79, 39);
+        }
+      }
+      // Floor
+      g.fillStyle(0x222233); g.fillRect(0, W12_FL, W12_TOTAL_W, 40);
+      for (let fx = 0; fx < W12_TOTAL_W; fx += 64) {
+        g.lineStyle(1, 0x2a2a44, 1); g.strokeRect(fx, W12_FL, 64, 40);
+      }
+      // Torch on left wall
+      g.fillStyle(0x555566); g.fillRect(80, W12_FL - 130, 8, 35);
+      g.fillStyle(0xcc6600, 0.9); g.fillTriangle(74, W12_FL - 130, 90, W12_FL - 130, 82, W12_FL - 152);
+      g.fillStyle(0xffaa00, 0.7); g.fillTriangle(78, W12_FL - 133, 86, W12_FL - 133, 82, W12_FL - 147);
+      // Red chair (right side of room)
+      const chairX = W12_TOTAL_W - 200;
+      g.fillStyle(0xaa1111); // seat
+      g.fillRect(chairX, W12_FL - 50, 50, 10);
+      g.fillStyle(0xcc2222); // back
+      g.fillRect(chairX + 2, W12_FL - 100, 46, 55);
+      g.fillStyle(0x881111); // legs
+      g.fillRect(chairX + 3,  W12_FL - 40, 8, 40);
+      g.fillRect(chairX + 39, W12_FL - 40, 8, 40);
+      // Bed (far right)
+      const bedX = W12_TOTAL_W - 380;
+      g.fillStyle(0x5544aa); // bed frame
+      g.fillRect(bedX, W12_FL - 38, 120, 38);
+      g.fillStyle(0xffeedd); // mattress
+      g.fillRect(bedX + 4, W12_FL - 50, 112, 16);
+      g.fillStyle(0xddccbb); // pillow
+      g.fillRect(bedX + 88, W12_FL - 62, 28, 18);
+      g.fillStyle(0x4433aa); // headboard
+      g.fillRect(bedX + 100, W12_FL - 90, 20, 52);
+      // Barred window at eye level (x=600, y around W12_FL-55 to W12_FL+5 = eye level for 42px sprite)
+      const winX = 560, winY = W12_FL - 110, winW = 80, winH = 80;
+      g.fillStyle(0x334466); g.fillRect(winX, winY, winW, winH);
+      g.fillStyle(0x88aacc, 0.35); g.fillRect(winX + 2, winY + 2, winW - 4, winH - 4);
+      // Night sky through window
+      g.fillStyle(0x0a0a2a); g.fillRect(winX + 2, winY + 2, winW - 4, winH - 4);
+      g.fillStyle(0xffffff);
+      [[winX+14, winY+20],[winX+30, winY+12],[winX+50, winY+25],[winX+62, winY+15],[winX+20, winY+50],[winX+55, winY+55]].forEach(([sx,sy]) => {
+        g.fillCircle(sx, sy, 1.5);
+      });
+      // Window bars
+      g.fillStyle(0x555577);
+      for (let bi = 0; bi < 4; bi++) g.fillRect(winX + 10 + bi * 18, winY - 4, 5, winH + 8);
+      g.fillRect(winX - 2, winY + winH/2 - 2, winW + 4, 5);
+      // Window frame
+      g.lineStyle(4, 0x333355, 1); g.strokeRect(winX - 2, winY - 2, winW + 4, winH + 4);
+      // "Z: Look out" hint near window
+      this.add.text(winX + winW/2, winY - 18, "Z: Look out", {
+        fontSize: "11px", color: "#aaaacc", stroke: "#000", strokeThickness: 2,
+      }).setDepth(4).setOrigin(0.5, 1);
+      return;
+    }
+
+    if (this.worldId === 13) {
+      const g = this.add.graphics();
+      // Sky
+      g.fillStyle(0x88ccff); g.fillRect(0, 0, W13_TOTAL_W, LEVEL_H);
+      // Clouds
+      g.fillStyle(0xffffff);
+      [[200,70,60,22],[600,55,75,25],[1100,65,55,20],[1700,55,80,28],[2400,70,65,22],[2900,50,70,24]].forEach(([cx,cy,rx,ry]) => {
+        g.fillEllipse(cx, cy, rx*2, ry*2); g.fillEllipse(cx-rx*0.35, cy+8, rx*1.3, ry*1.5); g.fillEllipse(cx+rx*0.35, cy+8, rx*1.3, ry*1.5);
+      });
+      // Forest section (0–1600): trees
+      g.fillStyle(0x3a8822);
+      [[100,40,90],[280,30,70],[450,45,100],[650,35,80],[820,40,90],[1000,30,75],[1150,45,100],[1350,35,80],[1500,40,85]].forEach(([tx,th,tw]) => {
+        g.fillStyle(0x5a3a10); g.fillRect(tx-6, W13_FL - th - 40, 12, 40);
+        g.fillStyle(0x3a9922); g.fillEllipse(tx, W13_FL - th - 50, tw, th + 30);
+        g.fillStyle(0x55cc33, 0.5); g.fillEllipse(tx - 15, W13_FL - th - 40, tw * 0.6, th * 0.6);
+      });
+      // Village section (1600+): cobblestone ground, buildings
+      g.fillStyle(0xaaaaaa); g.fillRect(1600, W13_FL - 6, W13_TOTAL_W - 1600, 6);
+      // Buildings
+      [[1650,120,80,0xcc8844],[1780,140,90,0xddaa66],[1950,110,75,0xcc9955],[2100,130,85,0xddb877]].forEach(([bx,bh,bw,bc]) => {
+        g.fillStyle(bc); g.fillRect(bx, W13_FL - bh, bw, bh);
+        g.fillStyle(0x884422); g.fillTriangle(bx - 10, W13_FL - bh, bx + bw/2, W13_FL - bh - 40, bx + bw + 10, W13_FL - bh);
+        g.fillStyle(0x333322); g.fillRect(bx + 10, W13_FL - bh + 20, 20, 30);
+        g.fillStyle(0x88bbff, 0.5); g.fillRect(bx + bw - 32, W13_FL - bh + 20, 22, 22);
+      });
+      // Boopkins' house
+      g.fillStyle(0x55bb55); g.fillRect(W13_BOOPKINS_X - 50, W13_FL - 130, 100, 130);
+      g.fillStyle(0x44aa44); g.fillTriangle(W13_BOOPKINS_X - 60, W13_FL - 130, W13_BOOPKINS_X, W13_FL - 180, W13_BOOPKINS_X + 60, W13_FL - 130);
+      g.fillStyle(0x222211); g.fillRect(W13_BOOPKINS_X - 16, W13_FL - 60, 32, 60);
+      // Exit door
+      g.fillStyle(0x8b4513); g.fillRect(W13_DOOR_X - 20, W13_FL - 80, 40, 80);
+      g.fillStyle(0xffd700); g.fillCircle(W13_DOOR_X + 12, W13_FL - 38, 5);
+      g.fillStyle(0x6b3010); g.fillRect(W13_DOOR_X - 20, W13_FL - 80, 40, 5);
+      this.add.text(W13_DOOR_X, W13_FL - 92, "↓ Exit", {
+        fontSize: "12px", color: "#ffee88", stroke: "#000", strokeThickness: 3,
+      }).setDepth(4).setOrigin(0.5, 1);
+      // Ground
+      g.fillStyle(0x448822); g.fillRect(0, W13_FL, 1600, 40);
+      g.fillStyle(0x998866); g.fillRect(1600, W13_FL, W13_TOTAL_W - 1600, 40);
+      return;
+    }
+
+    if (this.worldId === 14) {
+      // Competition arena — grand hall backdrop
+      const g = this.add.graphics();
+      g.fillStyle(0x1a0a2a); g.fillRect(0, 0, W14_TOTAL_W, LEVEL_H);
+      // Decorative columns every 400px
+      for (let colX = 0; colX < W14_TOTAL_W; colX += 400) {
+        g.fillStyle(0x4a3a6a); g.fillRect(colX, 0, 40, LEVEL_H - 40);
+        g.fillStyle(0x6a5a8a); g.fillRect(colX - 10, 0, 60, 30);
+        g.fillStyle(0x6a5a8a); g.fillRect(colX - 10, LEVEL_H - 70, 60, 30);
+        g.fillStyle(0xffcc44, 0.4); g.fillRect(colX + 16, 80, 8, LEVEL_H - 160);
+      }
+      // Banners
+      for (let bx = 200; bx < W14_TOTAL_W; bx += 400) {
+        g.fillStyle(0x8833aa); g.fillRect(bx - 15, 0, 30, 80);
+        g.fillStyle(0xffcc00); g.fillRect(bx - 13, 10, 26, 10);
+      }
+      // Floor
+      g.fillStyle(0x2a1a3a); g.fillRect(0, W14_FL, W14_TOTAL_W, 40);
+      for (let fx = 0; fx < W14_TOTAL_W; fx += 80) {
+        g.lineStyle(1, 0x3a2a4a, 1); g.strokeRect(fx, W14_FL, 80, 40);
+      }
+      return;
+    }
+
     const skyColors = [0x1a0a3a, 0x5c94fc, 0x0a2a0a, 0x3a1a00, 0x0a1a3a, 0x2a0a2a, 0x3a0a0a];
     const bg = this.add.graphics();
     bg.fillStyle(skyColors[(this.worldId - 1) % skyColors.length]);
@@ -3283,9 +4049,256 @@ export class GameScene extends Phaser.Scene {
     bg.fillStyle(0x050508); bg.fillRect(0, 0, LEVEL_W, 50); // ceiling
   }
 
+  private buildDeerForestBackground() {
+    const g = this.add.graphics();
+    g.fillStyle(0x2a6b2a); g.fillRect(0, 0, W10_TOTAL_W, W10_FL);
+    g.fillStyle(0x4a9a3a, 0.5); g.fillRect(0, 0, W10_TOTAL_W, W10_FL * 0.4);
+    g.fillStyle(0x88cc55, 0.2); g.fillRect(0, 0, W10_TOTAL_W, W10_FL * 0.2);
+    g.fillStyle(0x3a6b14); g.fillRect(0, W10_FL, W10_TOTAL_W, LEVEL_H - W10_FL);
+    g.fillStyle(0x5a9a2a); g.fillRect(0, W10_FL - 6, W10_TOTAL_W, 6);
+    g.fillStyle(0x1a4a1a, 0.7);
+    for (let tx = 100; tx < W10_TOTAL_W - 200; tx += 100 + (tx * 7 % 80)) {
+      const th = 80 + (tx * 3 % 120), tw = 40 + (tx * 5 % 40);
+      g.fillTriangle(tx, W10_FL - th, tx - tw/2, W10_FL - 20, tx + tw/2, W10_FL - 20);
+      g.fillRect(tx - 5, W10_FL - 20, 10, 20);
+    }
+    W10_RIVERS.forEach(([rx1, rx2]) => {
+      g.fillStyle(0x2255aa); g.fillRect(rx1, W10_FL, rx2 - rx1, LEVEL_H - W10_FL);
+      g.fillStyle(0x336699, 0.6); g.fillRect(rx1, W10_FL - 8, rx2 - rx1, 10);
+      g.fillStyle(0x66aaff, 0.35);
+      for (let rp = rx1 + 10; rp < rx2 - 10; rp += 22) g.fillRect(rp, W10_FL + 5, 12, 3);
+    });
+    const gtx = W10_GIANT_TREE_X;
+    g.fillStyle(0x5a3a10); g.fillRect(gtx - 18, W10_FL - 340, 36, 340);
+    g.fillStyle(0x228822); g.fillCircle(gtx, W10_FL - 340, 90);
+    g.fillStyle(0x33aa33); g.fillCircle(gtx - 50, W10_FL - 290, 60);
+    g.fillStyle(0x33aa33); g.fillCircle(gtx + 55, W10_FL - 295, 65);
+    g.fillStyle(0x55cc44); g.fillCircle(gtx, W10_FL - 370, 55);
+    g.fillStyle(0xaaff44, 0.85);
+    const leafPos: [number,number,number][] = [[gtx-30,W10_FL-360,12],[gtx+25,W10_FL-350,10],
+      [gtx-55,W10_FL-300,10],[gtx+60,W10_FL-310,11],[gtx+10,W10_FL-385,9]];
+    leafPos.forEach(([lx,ly,lr]) => g.fillCircle(lx, ly, lr));
+    g.fillStyle(0x1a0a00, 0.3); g.fillRect(W10_CAMPSITE_X, 0, 1300, W10_FL);
+    const fpx = W10_CAMPSITE_X + 120;
+    g.fillStyle(0x333333); g.fillEllipse(fpx, W10_FL - 4, 60, 14);
+    g.fillStyle(0xff5500, 0.9); g.fillTriangle(fpx-12,W10_FL-4, fpx,W10_FL-44, fpx+12,W10_FL-4);
+    g.fillStyle(0xffdd00, 0.5); g.fillTriangle(fpx-4,W10_FL-4, fpx,W10_FL-28, fpx+4,W10_FL-4);
+    const fsx = W10_FASHION_X;
+    g.fillStyle(0xffddcc); g.fillRect(fsx, W10_FL - 360, W10_FASHION_W + 40, 360);
+    g.fillStyle(0xff88aa); g.fillRect(fsx, W10_FL - 390, W10_FASHION_W + 40, 34);
+    g.fillStyle(0xffffff); g.fillRect(fsx + 20, W10_FL - 386, 300, 26);
+    g.fillStyle(0xdd1177); g.fillRect(fsx + 22, W10_FL - 384, 296, 22);
+    g.fillStyle(0xaaddff);
+    g.fillRect(fsx + 10, W10_FL - 320, 100, 80); g.fillRect(fsx + 130, W10_FL - 320, 100, 80);
+    g.fillStyle(0x888888);
+    g.fillRect(fsx + 5, W10_FL - 90, W10_FASHION_W + 30, 4);
+    g.fillRect(fsx + 5, W10_FL - 210, W10_FASHION_W + 30, 4);
+    g.fillRect(fsx + 5, W10_FL - 330, W10_FASHION_W + 30, 4);
+  }
+
   private buildWorldLevel() {
     this.platforms = this.physics.add.staticGroup();
     this.mushrooms = this.physics.add.staticGroup();
+    if (this.worldId === 10) {
+      // Forest ground — skip tiles inside rivers (they're deadly water gaps)
+      const tileCount10 = Math.ceil(W10_TOTAL_W / 64);
+      for (let i = 0; i < tileCount10; i++) {
+        const tx = i * 64 + 32;
+        if (!W10_RIVERS.some(([r1, r2]) => tx >= r1 && tx <= r2)) {
+          (this.platforms.create(tx, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0.1);
+        }
+      }
+      // River crossing patterns — randomly pick one of 3 layouts per river
+      // Each river has 3 candidate platform spots; we pick 2 for static
+      type Plank3 = [[number,number,number],[number,number,number],[number,number,number]];
+      const riverOptions: Plank3[] = [
+        // River 1 (250-550): spots at 300, 390, 480
+        [[300, W10_FL - 75, 90], [390, W10_FL - 115, 85], [480, W10_FL - 80, 90]],
+        // River 2 (750-1100): spots at 810, 920, 1030
+        [[810, W10_FL - 80, 95], [920, W10_FL - 120, 85], [1030, W10_FL - 80, 95]],
+        // River 3 (1800-2200): spots at 1840, 1970, 2100
+        [[1840, W10_FL - 85, 90], [1970, W10_FL - 125, 85], [2100, W10_FL - 85, 95]],
+        // River 4 (2500-2900): spots at 2540, 2680, 2820
+        [[2540, W10_FL - 80, 95], [2680, W10_FL - 120, 85], [2820, W10_FL - 80, 95]],
+        // River 5 (3200-3600): spots at 3250, 3380, 3530
+        [[3250, W10_FL - 80, 90], [3380, W10_FL - 115, 85], [3530, W10_FL - 80, 90]],
+      ];
+      // For each river, shuffle and pick 2 of the 3 spots as static planks
+      const planks: [number,number,number][] = [];
+      for (const opts of riverOptions) {
+        const picks = [...opts].sort(() => Math.random() - 0.5).slice(0, 2);
+        planks.push(...picks);
+      }
+      // Giant-tree approach, mid-forest, and fashion-store are always present
+      planks.push(
+        [1350, W10_FL - 70, 110], [1460, W10_FL - 140, 100],
+        [2360, W10_FL - 100, 90],
+        // Fashion store shelves
+        [W10_FASHION_X + 360, W10_FL - 135, W10_FASHION_W + 20],
+        [W10_FASHION_X + 360, W10_FL - 260, W10_FASHION_W + 20],
+        [W10_FASHION_X + 40,  W10_FL - 65,  64],
+        [W10_FASHION_X + 80,  W10_FL - 105, 64],
+        [W10_FASHION_X + 80,  W10_FL - 205, 64],
+      );
+      planks.forEach(([cx, py, pw]) => {
+        const tc = Math.ceil(pw / 64);
+        for (let pi = 0; pi < tc; pi++) {
+          (this.platforms.create(cx - pw/2 + pi*64 + 32, py, "deer-plank") as Phaser.Physics.Arcade.Sprite).refreshBody();
+        }
+      });
+
+      // Falling platforms (crack after 3s of player standing on them)
+      // Format: [centerX, y, width]
+      const fallingPlatDefs: [number,number,number][] = [
+        [490 + Math.floor(Math.random()*40), W10_FL - 90 - Math.floor(Math.random()*30), 85],
+        [990 + Math.floor(Math.random()*40), W10_FL - 90 - Math.floor(Math.random()*30), 85],
+        [2050 + Math.floor(Math.random()*40), W10_FL - 90 - Math.floor(Math.random()*30), 85],
+        [2800 + Math.floor(Math.random()*40), W10_FL - 90 - Math.floor(Math.random()*30), 85],
+        [3470 + Math.floor(Math.random()*40), W10_FL - 90 - Math.floor(Math.random()*30), 85],
+      ];
+      this.deerFallGroup = this.physics.add.staticGroup();
+      this.physics.add.collider(this.player, this.deerFallGroup);
+      for (const [fpx, fpy, fpw] of fallingPlatDefs) {
+        const fpImg = this.deerFallGroup.create(fpx, fpy, "deer-plank") as Phaser.Physics.Arcade.Sprite;
+        fpImg.setDisplaySize(fpw, 16).setDepth(2).refreshBody();
+        // Crack visual overlay
+        const crackG = this.add.graphics().setDepth(3);
+        crackG.lineStyle(2, 0x2a1400, 1.0);
+        crackG.beginPath(); crackG.moveTo(fpx - fpw/2 + 10, fpy - 6); crackG.lineTo(fpx - fpw/2 + 24, fpy + 4); crackG.strokePath();
+        crackG.beginPath(); crackG.moveTo(fpx + fpw/2 - 18, fpy - 5); crackG.lineTo(fpx + fpw/2 - 4, fpy + 5); crackG.strokePath();
+        crackG.lineStyle(1, 0x5a3000, 0.6);
+        crackG.beginPath(); crackG.moveTo(fpx - fpw/2 + 16, fpy - 2); crackG.lineTo(fpx - fpw/2 + 30, fpy + 6); crackG.strokePath();
+        type FPType = Phaser.Physics.Arcade.Sprite & { _crackG: Phaser.GameObjects.Graphics; _fallTimer: Phaser.Time.TimerEvent | null; _falling: boolean };
+        (fpImg as FPType)._crackG  = crackG;
+        (fpImg as FPType)._fallTimer = null;
+        (fpImg as FPType)._falling  = false;
+        this.deerFallingPlatforms.push(fpImg);
+      }
+
+      // Moving platforms (slide back and forth)
+      // Format: [startX, y, width, range]
+      const movingPlatDefs: [number,number,number,number][] = [
+        [350 + Math.floor(Math.random()*60), W10_FL - 130 - Math.floor(Math.random()*40), 85, 60 + Math.floor(Math.random()*40)],
+        [860 + Math.floor(Math.random()*60), W10_FL - 140 - Math.floor(Math.random()*40), 85, 70 + Math.floor(Math.random()*40)],
+        [1900 + Math.floor(Math.random()*60), W10_FL - 140 - Math.floor(Math.random()*40), 85, 80 + Math.floor(Math.random()*40)],
+        [2620 + Math.floor(Math.random()*60), W10_FL - 130 - Math.floor(Math.random()*40), 85, 60 + Math.floor(Math.random()*40)],
+        [3310 + Math.floor(Math.random()*60), W10_FL - 130 - Math.floor(Math.random()*40), 85, 60 + Math.floor(Math.random()*40)],
+      ];
+      this.deerMoveGroup = this.physics.add.staticGroup();
+      this.physics.add.collider(this.player, this.deerMoveGroup);
+      let mpOffsetIdx = 0;
+      for (const [mpx, mpy, mpw, mpr] of movingPlatDefs) {
+        const mpSprite = this.deerMoveGroup.create(mpx, mpy, "deer-plank") as Phaser.Physics.Arcade.Sprite;
+        mpSprite.setDisplaySize(mpw, 16).setDepth(2).refreshBody();
+        // Store motion data as custom props
+        (mpSprite as Phaser.Physics.Arcade.Sprite & { _startX: number; _range: number; _offset: number })._startX = mpx;
+        (mpSprite as Phaser.Physics.Arcade.Sprite & { _range: number })._range  = mpr;
+        (mpSprite as Phaser.Physics.Arcade.Sprite & { _offset: number })._offset = mpOffsetIdx * 1.1;
+        mpOffsetIdx++;
+        this.deerMovingPlatforms.push(mpSprite);
+      }
+
+      // Log piles — visual + physics walls + walkable tops
+      this.deerLogGroup = this.physics.add.staticGroup();
+      const logs: [number,number][] = [
+        [W10_LOG1_X, W10_LOG_H], [W10_LOG2_X, W10_LOG_H + 5], [W10_LOG3_X, W10_LOG_H - 5],
+      ];
+      const logG = this.add.graphics().setDepth(2);
+      logs.forEach(([lx, lh]) => {
+        logG.fillStyle(0x6b3a10); logG.fillRect(lx, W10_FL - lh, W10_LOG_W, lh);
+        logG.fillStyle(0x8b5a20);
+        for (let ly = W10_FL - lh + 8; ly < W10_FL; ly += 18) {
+          logG.fillRect(lx + 4, ly, W10_LOG_W - 8, 12);
+          logG.fillStyle(0x5a2a08); logG.fillRect(lx + 4, ly + 10, W10_LOG_W - 8, 2);
+          logG.fillStyle(0x8b5a20);
+        }
+        logG.fillStyle(0x4a2508); logG.fillRect(lx, W10_FL - lh, W10_LOG_W, 6);
+        // Invisible physics wall
+        const wall = this.deerLogGroup!.create(lx + W10_LOG_W/2, W10_FL - lh/2, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+        wall.setDisplaySize(W10_LOG_W, lh).setAlpha(0).refreshBody();
+        // Walkable top
+        const top = this.platforms.create(lx + W10_LOG_W/2, W10_FL - lh - 8, "deer-plank") as Phaser.Physics.Arcade.Sprite;
+        top.setDisplaySize(W10_LOG_W, 16).setAlpha(0).refreshBody();
+      });
+      // Gun pickup visual
+      const gunG = this.add.graphics().setDepth(3);
+      gunG.fillStyle(0x555555); gunG.fillRect(W10_GUN_X - 11, W10_FL - 14, 22, 10);
+      gunG.fillStyle(0x333333); gunG.fillRect(W10_GUN_X - 2, W10_FL - 18, 8, 5);
+      gunG.fillStyle(0x666666); gunG.fillRect(W10_GUN_X + 8, W10_FL - 13, 8, 7);
+      this.deerGunGfx = gunG;
+      return;  // no return TV — completion via fashion store
+    }
+    if (this.worldId === 11) {
+      // Castle bridge — just flat ground (handled by background) + invisible wall at ballroom door
+      // Ground tiles are created by the normal ground loop below… add a castle door trigger marker
+      const doorMarker = this.add.graphics().setDepth(3);
+      // Ballroom entrance — ornate archway
+      doorMarker.fillStyle(0x6655aa); doorMarker.fillRect(W11_DOOR_X - 5, W11_FL - 160, 10, 160);
+      doorMarker.fillStyle(0x8877cc); doorMarker.fillRect(W11_DOOR_X + 45, W11_FL - 160, 10, 160);
+      doorMarker.fillStyle(0x553388); doorMarker.fillRect(W11_DOOR_X - 5, W11_FL - 170, 60, 20);
+      doorMarker.fillStyle(0x9988dd); doorMarker.fillRect(W11_DOOR_X, W11_FL - 160, 50, 155);
+      doorMarker.fillStyle(0x221144, 0.8); doorMarker.fillRect(W11_DOOR_X + 5, W11_FL - 155, 40, 150);
+      doorMarker.fillStyle(0xffcc00); doorMarker.fillCircle(W11_DOOR_X + 42, W11_FL - 80, 4);
+      const enterText = this.add.text(W11_DOOR_X + 25, W11_FL - 180, "Z: Enter", {
+        fontSize: "13px", color: "#ffee88", stroke: "#000", strokeThickness: 3,
+      }).setDepth(4).setOrigin(0.5, 1);
+      (enterText as Phaser.GameObjects.Text & { _isCastleDoor: boolean })._isCastleDoor = true;
+      // Banners hanging from bridge posts
+      const bannerG = this.add.graphics().setDepth(2);
+      [[400, W11_FL], [900, W11_FL], [1500, W11_FL], [2000, W11_FL]].forEach(([bx, by]) => {
+        bannerG.fillStyle(0x888888); bannerG.fillRect(bx - 2, by - 110, 4, 110);
+        bannerG.fillStyle(0x8822aa); bannerG.fillRect(bx - 12, by - 110, 24, 50);
+        bannerG.fillStyle(0xffdd00); bannerG.fillRect(bx - 10, by - 102, 20, 6);
+        bannerG.fillStyle(0xffdd00); bannerG.fillRect(bx - 10, by - 80, 20, 6);
+      });
+      // Ground physics tiles
+      for (let tx = 32; tx < W11_TOTAL_W; tx += 64) {
+        (this.platforms.create(tx, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).refreshBody();
+      }
+      return;
+    }
+    if (this.worldId === 12) {
+      // Ground tiles
+      for (let tx = 32; tx < W12_TOTAL_W; tx += 64) {
+        (this.platforms.create(tx, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).refreshBody();
+      }
+      // If returning from village (Boopkins sent) → trigger cutscene
+      if (this.fromWorld === 13) {
+        this.time.delayedCall(600, () => this.startBoopkinsCutscene());
+      }
+      return;
+    }
+    if (this.worldId === 13) {
+      // Ground physics tiles
+      for (let tx = 32; tx < W13_TOTAL_W; tx += 64) {
+        (this.platforms.create(tx, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).setAlpha(0).refreshBody();
+      }
+      // Some elevated platforms in forest section
+      const vPlanks: [number,number,number][] = [
+        [400, W13_FL - 80, 90], [700, W13_FL - 130, 80], [950, W13_FL - 80, 90],
+        [1200, W13_FL - 120, 85], [1400, W13_FL - 75, 80],
+      ];
+      vPlanks.forEach(([cx, py, pw]) => {
+        const tc = Math.ceil(pw / 64);
+        for (let pi = 0; pi < tc; pi++) {
+          (this.platforms.create(cx - pw/2 + pi*64 + 32, py, "deer-plank") as Phaser.Physics.Arcade.Sprite).refreshBody();
+        }
+      });
+      // Draw Boopkins NPC
+      const bkGfx = this.add.graphics().setDepth(3);
+      this.drawBoopkins(bkGfx, W13_BOOPKINS_X, W13_FL);
+      this.add.text(W13_BOOPKINS_X, W13_FL - 80, "Z: Talk", {
+        fontSize: "11px", color: "#88ff88", stroke: "#000", strokeThickness: 3,
+      }).setDepth(4).setOrigin(0.5, 1);
+      return;
+    }
+    if (this.worldId === 14) {
+      // Ground for challenge phases
+      for (let tx = 32; tx < W14_TOTAL_W; tx += 64) {
+        (this.platforms.create(tx, LEVEL_H - 20, "ground-tile") as Phaser.Physics.Arcade.Sprite).refreshBody();
+      }
+      return;
+    }
     const tileCount = Math.ceil(LEVEL_W / 64);
     for (let i = 0; i < tileCount; i++) {
       this.platforms.create(i * 64 + 32, LEVEL_H - 20, "ground-tile");
@@ -3531,6 +4544,7 @@ export class GameScene extends Phaser.Scene {
       this.scene.start("GameScene", {
         character: this.character,
         worldId,
+        dressCharacter: this.dressCharacter,
         ...(worldId === 0 && { fromWorld: this.worldId }),
         ...((worldId === 8 && this.worldId === 9) && { fromWorld: 9 }),
       });
@@ -3579,7 +4593,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupCamera() {
-    const camW = this.worldId === 9 ? 1920 : LEVEL_W;
+    const camW = this.worldId === 9  ? 1920
+               : this.worldId === 10 ? W10_TOTAL_W
+               : this.worldId === 11 ? W11_TOTAL_W
+               : this.worldId === 12 ? W12_TOTAL_W
+               : this.worldId === 13 ? W13_TOTAL_W
+               : this.worldId === 14 ? W14_TOTAL_W
+               : LEVEL_W;
     this.cameras.main.setBounds(0, 0, camW, LEVEL_H);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
   }
@@ -3815,16 +4835,24 @@ export class GameScene extends Phaser.Scene {
       fontSize: "11px", color: "#cc9922", stroke: "#000", strokeThickness: 2,
     }).setScrollFactor(0).setDepth(D + 1).setOrigin(0, 0.5));
 
-    // World entries: id 0 = Lobby, 1-9 = worlds
-    const worlds: { id: number; label: string }[] = [
-      { id: 0, label: "Lobby" },
-      ...Array.from({ length: 9 }, (_, i) => ({ id: i + 1, label: `W${i + 1}` })),
+    // Lobby + W1-W7 remapped: W1=worldId 8 (Mario's Mysteries), W2=Once Upon cutscene,
+    // W3-W7 = worldIds 2-6; interior worldId 9 counts as W1
+    interface TW { label: string; wid?: number; action?: () => void; isActive?: () => boolean }
+    const worlds: TW[] = [
+      { label: "Lobby", wid: 0 },
+      { label: "W1", wid: 8, isActive: () => this.worldId === 8 || this.worldId === 9 },
+      { label: "W2", action: () => { this.mysteriesComplete = true; this.startOnceUponCutscene(); } },
+      { label: "W3", wid: 2 },
+      { label: "W4", wid: 3 },
+      { label: "W5", wid: 4 },
+      { label: "W6", wid: 5 },
+      { label: "W7", wid: 6 },
     ];
 
     let bx = 82;
     for (const w of worlds) {
-      const bw = w.id === 0 ? 46 : 30;
-      const active = this.worldId === w.id;
+      const bw = w.label === "Lobby" ? 46 : 30;
+      const active = w.isActive ? w.isActive() : (w.wid !== undefined && this.worldId === w.wid);
 
       const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
       bg.fillStyle(active ? 0x2a2000 : 0x111100, 1).fillRoundedRect(bx, 5, bw, 24, 4);
@@ -3841,9 +4869,11 @@ export class GameScene extends Phaser.Scene {
       hit.on("pointerout",   () => (label as Phaser.GameObjects.Text).clearTint());
       hit.on("pointerdown",  () => {
         if (this.dying || this.settingsOpen) return;
-        // Grant mysteries completion so World 9-adjacent features work
-        if (w.id >= 8) this.mysteriesComplete = true;
-        this.enterWorld(w.id);
+        if (w.action) { w.action(); return; }
+        if (w.wid !== undefined) {
+          if (w.wid >= 8) this.mysteriesComplete = true;
+          this.enterWorld(w.wid);
+        }
       });
 
       bx += bw + 4;
@@ -4569,6 +5599,465 @@ export class GameScene extends Phaser.Scene {
     this.phoneLogObjs = [];
   }
 
+  // ── Deer Mario world setup ───────────────────────────────────────────────────
+
+  private setupDeerWorld() {
+    if (this.deerLogGroup) {
+      this.physics.add.collider(this.player, this.deerLogGroup);
+    }
+
+    // Leaf pickups near giant tree (5 shiny circles)
+    const leafPositions: [number,number][] = [
+      [W10_GIANT_TREE_X - 35, W10_FL - 230],
+      [W10_GIANT_TREE_X + 30, W10_FL - 215],
+      [W10_GIANT_TREE_X - 60, W10_FL - 175],
+      [W10_GIANT_TREE_X + 65, W10_FL - 185],
+      [W10_GIANT_TREE_X + 10, W10_FL - 260],
+    ];
+    leafPositions.forEach(([lx, ly]) => {
+      const lg = this.add.graphics().setDepth(4);
+      lg.fillStyle(0xaaff44, 0.9); lg.fillCircle(lx, ly, 14);
+      lg.fillStyle(0x88dd22, 0.6); lg.fillCircle(lx - 4, ly - 4, 7);
+      lg.fillStyle(0xffffff, 0.4); lg.fillCircle(lx - 5, ly - 5, 4);
+      // Z prompt below leaf
+      this.add.text(lx, ly + 18, "Z", {
+        fontSize: "11px", color: "#ffffff", stroke: "#000", strokeThickness: 2,
+      }).setDepth(5).setOrigin(0.5, 0);
+      this.deerLeafObjs.push({ gfx: lg, collected: false, x: lx, y: ly });
+    });
+
+    // Swagmaster NPC at campsite
+    this.deerSwagGfx = this.add.graphics().setDepth(4);
+    this.drawSwagNpc(this.deerSwagGfx, W10_SWAG_X, W10_FL);
+
+    // HP bar above Swag
+    const swagHpG = this.add.graphics().setDepth(5);
+    swagHpG.fillStyle(0x222222).fillRect(W10_SWAG_X - 40, W10_FL - 110, 80, 10);
+    swagHpG.fillStyle(0xff2222).fillRect(W10_SWAG_X - 38, W10_FL - 108, 76, 6);
+    this.time.addEvent({ delay: 100, loop: true, callback: () => {
+      if (!swagHpG.scene) return;
+      swagHpG.clear();
+      swagHpG.fillStyle(0x222222).fillRect(W10_SWAG_X - 40, W10_FL - 110, 80, 10);
+      swagHpG.fillStyle(0xff2222).fillRect(W10_SWAG_X - 38, W10_FL - 108,
+        Math.round(76 * this.deerSwagHp / 5), 6);
+    }});
+
+    // Barrage warning overlay
+    const wg = this.add.graphics().setScrollFactor(0).setDepth(18).setVisible(false);
+    this.deerBarrageWarningGfx = wg;
+    this.deerBarrageWarningText = this.add.text(640, 22, "⚠  DANGER — STAY LOW!  ⚠", {
+      fontSize: "20px", color: "#ff4400", fontStyle: "bold",
+      stroke: "#000000", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(19).setOrigin(0.5, 0).setVisible(false);
+
+    // Bomb group
+    this.deerBombGroup = this.physics.add.group();
+
+    // Start barrage cycle once player enters campsite (only once)
+    this.time.addEvent({ delay: 500, loop: true, callback: () => {
+      if (this.deerSwagDefeated) return;
+      if (this.player.x >= W10_CAMPSITE_X && !this.deerBarrageStarted) {
+        this.deerBarrageStarted = true;
+        this.deerBarrageCycle();
+      }
+    }});
+
+    // Swag throws bombs once player is in campsite
+    this.deerSwagBombTimer = this.time.addEvent({
+      delay: 2500, loop: true, callback: () => {
+        if (!this.deerSwagDefeated && this.player.x >= W10_CAMPSITE_X) {
+          this.spawnSwagBomb();
+        }
+      },
+    });
+
+    // HUD label
+    this.add.text(640, 50, "DEER MARIO'S FOREST", {
+      fontSize: "18px", color: "#aaff44", fontStyle: "bold",
+      stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(10).setOrigin(0.5, 0);
+
+    // Welcome dialogue
+    this.time.delayedCall(400, () => {
+      this.showDialogue("Deer Mario's Forest! Find the giant tree and pick its leaves.\nThen find Swagmaster at the campsite!", "#88ffaa", 5000);
+    });
+  }
+
+  private deerBarrageCycle() {
+    if (this.deerSwagDefeated) { this.deerBarrageActive = false; return; }
+    if (this.deerBarrageFlashEvent) { this.deerBarrageFlashEvent.remove(false); this.deerBarrageFlashEvent = null; }
+    this.deerBarrageActive = true;
+    // 3s active — Swag shoots streaks
+    this.time.addEvent({
+      delay: 200, repeat: 14, callback: () => {
+        if (!this.deerSwagDefeated && this.player.x >= W10_CAMPSITE_X) this.spawnDeerStreak();
+      },
+    });
+    this.time.delayedCall(3000, () => {
+      this.deerBarrageActive = false;
+      if (!this.deerSwagDefeated) {
+        // Show warning solid for full 2s
+        this.deerBarrageWarningGfx?.setVisible(true);
+        this.deerBarrageWarningText?.setVisible(true);
+        this.time.delayedCall(3000, () => {
+          if (!this.deerSwagDefeated && this.player.x >= W10_CAMPSITE_X) this.deerBarrageCycle();
+        });
+      }
+    });
+  }
+
+  private spawnDeerStreak() {
+    const sy = W10_FL - W10_LOG_H - 30 + (Math.random() - 0.5) * 30;
+    const streak = this.add.graphics().setDepth(5);
+    streak.fillStyle(0xff5500, 0.9); streak.fillRect(-14, -3, 28, 5);
+    streak.fillStyle(0xff8800, 0.55); streak.fillRect(-26, -1, 14, 3);
+    streak.x = W10_SWAG_X + 30; streak.y = sy;
+    this.tweens.add({
+      targets: streak, x: -200, duration: 2600, ease: "Linear",
+      onComplete: () => streak.destroy(),
+    });
+  }
+
+  private spawnSwagBomb() {
+    if (!this.deerBombGroup) return;
+    const bx = W10_SWAG_X - 20 + (Math.random() - 0.5) * 40;
+    const bomb = this.deerBombGroup.create(bx, W10_FL - 90, "deer-bomb") as Phaser.Physics.Arcade.Sprite;
+    bomb.setDepth(5);
+    (bomb.body as Phaser.Physics.Arcade.Body).setVelocity((this.player.x - bx) * 0.4, -280);
+  }
+
+  private spawnFashionBomb() {
+    if (!this.deerBombGroup) return;
+    if (this.deerFashionCount >= W10_CLOTH_COUNT) return;
+    const bx = W10_FASHION_X + 20 + Math.random() * (W10_FASHION_W + 20);
+    const bomb = this.deerBombGroup.create(bx, W10_FL - 380, "deer-bomb") as Phaser.Physics.Arcade.Sprite;
+    bomb.setDepth(5);
+    (bomb.body as Phaser.Physics.Arcade.Body).setVelocityY(100);
+  }
+
+  private buildFashionStore() {
+    const clothColors = [0xff88cc,0xcc44ff,0xff4488,0x4488ff,0x44ffcc,0xffcc44,0xff6622,0x88ff44,0xaa44ff,0xff4444];
+    for (let row = 0; row < 3; row++) {
+      const iy = W10_FL - 90 - row * 120;
+      for (let col = 0; col < 10; col++) {
+        const ix = W10_FASHION_X + 30 + col * 66;
+        const cg = this.add.graphics().setDepth(4);
+        const col2 = clothColors[(row * 10 + col) % clothColors.length];
+        cg.fillStyle(col2); cg.fillRect(ix - 12, iy - 24, 24, 30);
+        cg.fillStyle(0xffffff, 0.3); cg.fillRect(ix - 8, iy - 22, 10, 12);
+        const zl = this.add.text(ix, iy + 10, "Z", {
+          fontSize: "10px", color: "#fff", stroke: "#000", strokeThickness: 2,
+        }).setDepth(5).setOrigin(0.5, 0);
+        (cg as Phaser.GameObjects.Graphics & { _wx: number; _wy: number })._wx = ix;
+        (cg as Phaser.GameObjects.Graphics & { _wx: number; _wy: number })._wy = iy;
+        this.deerClothingObjs.push({ gfx: cg, label: zl, collected: false });
+      }
+    }
+
+    // Exit door — appears after all clothes collected
+    const doorX = W10_FASHION_X + W10_FASHION_W + 80;
+    const doorG = this.add.graphics().setDepth(4).setVisible(false);
+    doorG.fillStyle(0x8b4513); doorG.fillRect(doorX - 22, W10_FL - 80, 44, 80);
+    doorG.fillStyle(0x6b3010); doorG.fillRect(doorX - 22, W10_FL - 80, 44, 6);
+    doorG.fillStyle(0x5a2208); doorG.fillRect(doorX - 22, W10_FL - 80, 6, 80);
+    doorG.fillStyle(0xffd700); doorG.fillCircle(doorX + 12, W10_FL - 38, 5);
+    const doorLabel = this.add.text(doorX, W10_FL - 92, "EXIT ->", {
+      fontSize: "11px", color: "#fff", stroke: "#000", strokeThickness: 2,
+    }).setDepth(5).setOrigin(0.5, 1).setVisible(false);
+    this.deerExitDoorGfx = doorG;
+    // Store door label in the Graphics object for retrieval
+    (doorG as Phaser.GameObjects.Graphics & { _label: Phaser.GameObjects.Text })._label = doorLabel;
+    // Store door X for proximity check
+    (doorG as Phaser.GameObjects.Graphics & { _doorX: number })._doorX = doorX;
+  }
+
+  private startDressCutscene() {
+    if (this.dying) return;
+    this.dying = true;
+    const W = 1280, H = 720, D = 40;
+    const CY = Math.round(H * 0.73);
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.onceUponObjs.push(o); return o;
+    };
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x000000, 1).fillRect(0, 0, W, H);
+    const roomG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    this.drawPrincessRoom(roomG, W, H);
+    const charG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    this.drawPlayerInDress(charG, W / 2, CY);
+    const puzG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const boxG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    const boxH = 90, boxY = H - boxH - 14;
+    const showBox = (speaker: string, text: string, color = "#ffccee") => {
+      boxG.clear();
+      boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
+      boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
+      narr.setText(speaker ? `${speaker}: ${text}` : text).setColor(color);
+    };
+    const narr = push(this.add.text(W / 2, boxY + boxH / 2, "", {
+      fontSize: "15px", color: "#ffccee", align: "center", wordWrap: { width: W - 120 },
+    }).setScrollFactor(0).setDepth(D + 4).setOrigin(0.5, 0.5));
+
+    // Phase 1: narrator + player reacts
+    showBox("Narrator", "* And so, the princess was dressed and ready for the ball! *", "#ffccee");
+    this.time.delayedCall(2500, () => {
+      showBox(this.dressCharacter.charAt(0).toUpperCase() + this.dressCharacter.slice(1),
+        "What the heck is this?!", "#ffee55");
+    });
+
+    // Phase 2: Mr. Puzzles appears
+    this.time.delayedCall(5000, () => {
+      this.drawMrPuzzlesTV(puzG, W * 0.20, H * 0.22, 180, 130);
+      showBox("Mr. Puzzles", "Allow me to improve that look for you!", "#ff8855");
+      // Flash effect simulating "change"
+      this.time.delayedCall(1500, () => {
+        this.cameras.main.flash(400, 255, 255, 255);
+        this.time.delayedCall(500, () => {
+          charG.clear();
+          this.drawPlayerInDress(charG, W / 2, CY); // same dress, "changed"
+          showBox("Mr. Puzzles", "There! Perfect!", "#ff8855");
+        });
+      });
+    });
+
+    // Phase 3: Player reaction
+    this.time.delayedCall(8500, () => {
+      puzG.clear();
+      showBox(this.dressCharacter.charAt(0).toUpperCase() + this.dressCharacter.slice(1),
+        "Oh my god that is much better.", "#ffee55");
+    });
+
+    // Transition to castle (World 11)
+    const dressTransition = () => {
+      this.cameras.main.fadeOut(1000, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.onceUponObjs.forEach(o => o.destroy());
+        this.onceUponObjs = [];
+        this.scene.start("GameScene", {
+          character: this.dressCharacter,
+          worldId: 11,
+          fromWorld: 0,
+          dressCharacter: this.dressCharacter,
+        });
+      });
+    };
+    this.time.delayedCall(11500, dressTransition);
+    const dressSkip = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "Escape") {
+        window.removeEventListener("keydown", dressSkip);
+        this.time.removeAllEvents();
+        dressTransition();
+      }
+    };
+    push(this.add.text(640, 16, "SPACE/ESC to skip", {
+      fontSize: "12px", color: "#ffffff88", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 5).setOrigin(0.5, 0));
+    window.addEventListener("keydown", dressSkip);
+  }
+
+  private drawLuigiKnight(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    // Feet / greaves (silver armored boots)
+    g.fillStyle(0xaaaaaa); g.fillRect(cx - 12, baseY - 18, 10, 18);
+    g.fillStyle(0xaaaaaa); g.fillRect(cx + 2, baseY - 18, 10, 18);
+    g.fillStyle(0x999999); g.fillRect(cx - 13, baseY - 6, 12, 6);
+    g.fillStyle(0x999999); g.fillRect(cx + 1, baseY - 6, 12, 6);
+    g.fillStyle(0xcccc88); g.fillRect(cx - 12, baseY - 20, 10, 3);
+    g.fillStyle(0xcccc88); g.fillRect(cx + 2, baseY - 20, 10, 3);
+    // Legs (cuisses)
+    g.fillStyle(0xbbbbbb); g.fillRect(cx - 13, baseY - 42, 12, 24);
+    g.fillStyle(0xbbbbbb); g.fillRect(cx + 1, baseY - 42, 12, 24);
+    g.fillStyle(0xcccc88); g.fillRect(cx - 13, baseY - 43, 12, 3);
+    g.fillStyle(0xcccc88); g.fillRect(cx + 1, baseY - 43, 12, 3);
+    // Tassets / hip armor
+    g.fillStyle(0xaaaaaa); g.fillRect(cx - 16, baseY - 50, 32, 10);
+    g.fillStyle(0xcccc88); g.fillRect(cx - 16, baseY - 52, 32, 3);
+    // Torso / breastplate
+    g.fillStyle(0xcccccc); g.fillRect(cx - 14, baseY - 88, 28, 38);
+    g.fillStyle(0xdddddd); g.fillRect(cx - 12, baseY - 86, 24, 16); // chest highlight
+    g.fillStyle(0xcccc88); g.fillRect(cx - 14, baseY - 90, 28, 3);  // gold trim top
+    g.fillStyle(0xcccc88); g.fillRect(cx - 14, baseY - 52, 28, 3);  // gold trim bottom
+    // Center chest ridge
+    g.fillStyle(0xaaaaaa); g.fillRect(cx - 2, baseY - 88, 4, 38);
+    // Pauldrons (shoulder guards)
+    g.fillStyle(0xbbbbbb); g.fillRect(cx - 22, baseY - 92, 14, 18);
+    g.fillStyle(0xbbbbbb); g.fillRect(cx + 8, baseY - 92, 14, 18);
+    g.fillStyle(0xcccc88); g.fillRect(cx - 22, baseY - 94, 14, 3);
+    g.fillStyle(0xcccc88); g.fillRect(cx + 8, baseY - 94, 14, 3);
+    // Arm holding apple (right side, extended forward)
+    g.fillStyle(0xbbbbbb); g.fillRect(cx + 18, baseY - 84, 12, 20);
+    g.fillStyle(0xaaaaaa); g.fillRect(cx + 18, baseY - 65, 14, 12); // gauntlet
+    g.fillStyle(0xcccc88); g.fillRect(cx + 18, baseY - 66, 14, 3);
+    // Left arm (bent)
+    g.fillStyle(0xbbbbbb); g.fillRect(cx - 28, baseY - 84, 12, 22);
+    g.fillStyle(0xaaaaaa); g.fillRect(cx - 30, baseY - 65, 14, 12);
+    // Apple in right hand
+    g.fillStyle(0xee2222); g.fillCircle(cx + 31, baseY - 56, 9);
+    g.fillStyle(0xff4444); g.fillCircle(cx + 28, baseY - 60, 4);    // highlight
+    g.fillStyle(0x3a8a1a); g.fillRect(cx + 30, baseY - 66, 3, 7);   // stem
+    g.fillStyle(0x44aa22); g.fillEllipse(cx + 33, baseY - 67, 10, 6); // leaf
+    // Gorget (neck guard)
+    g.fillStyle(0xbbbbbb); g.fillRect(cx - 8, baseY - 94, 16, 8);
+    // Helmet base
+    g.fillStyle(0xbbbbbb); g.fillRect(cx - 14, baseY - 120, 28, 28);
+    // Visor (dark)
+    g.fillStyle(0x222233); g.fillRect(cx - 11, baseY - 113, 22, 10);
+    g.fillStyle(0x33334a); g.fillRect(cx - 9, baseY - 112, 18, 8);
+    // Helmet dome
+    g.fillStyle(0xcccccc); g.fillRect(cx - 14, baseY - 130, 28, 14);
+    g.fillStyle(0xdddddd); g.fillRect(cx - 10, baseY - 130, 20, 7); // shine
+    // Helmet gold trim
+    g.fillStyle(0xcccc88); g.fillRect(cx - 14, baseY - 122, 28, 3);
+    g.fillStyle(0xcccc88); g.fillRect(cx - 14, baseY - 132, 28, 3);
+    // Green plume on top (Luigi reference)
+    g.fillStyle(0x228822); g.fillRect(cx - 3, baseY - 148, 6, 20);
+    g.fillStyle(0x33aa33); g.fillEllipse(cx, baseY - 148, 14, 22);
+    // Mustache (Luigi's green moustache visible under visor)
+    g.fillStyle(0x223311); g.fillRect(cx - 7, baseY - 108, 14, 3);
+    // Kneepad gold circles
+    g.fillStyle(0xcccc88); g.fillCircle(cx - 7, baseY - 36, 4);
+    g.fillStyle(0xcccc88); g.fillCircle(cx + 7, baseY - 36, 4);
+  }
+
+  private startCastleCutscene() {
+    if (this.dying) return;
+    this.dying = true;
+    const W = 1280, H = 720, D = 40;
+    const CY = Math.round(H * 0.73);
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.castleObjs.push(o); return o;
+    };
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x000000, 1).fillRect(0, 0, W, H);
+    const roomG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    // Ballroom interior
+    this.drawPrincessRoom(roomG, W, H);
+    // Fancy ballroom extra decor
+    roomG.fillStyle(0x332255, 0.5); roomG.fillRect(0, 0, W, H * 0.15);
+    roomG.fillStyle(0xffdd44, 0.6); roomG.fillRect(0, H * 0.14, W, 4);
+    for (let cx2 = 0; cx2 < W; cx2 += 160) {
+      roomG.fillStyle(0xffdd44, 0.4); roomG.fillRect(cx2, 0, 3, H * 0.15);
+    }
+
+    const charG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const smg4G  = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const luigiG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const boxG   = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    const boxH = 90, boxY = H - boxH - 14;
+
+    const showBox = (speaker: string, text: string, color = "#ddddff") => {
+      boxG.clear();
+      boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
+      boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
+      narr.setText(speaker ? `${speaker}: ${text}` : text).setColor(color);
+    };
+    const narr = push(this.add.text(W / 2, boxY + boxH / 2, "", {
+      fontSize: "15px", color: "#ddddff", align: "center", wordWrap: { width: W - 120 },
+    }).setScrollFactor(0).setDepth(D + 4).setOrigin(0.5, 0.5));
+
+    // Draw player in dress on right
+    this.drawPlayerInDress(charG, W * 0.72, CY);
+    showBox("Narrator", "* The princess arrives at King Bob's Ball! *", "#ffccee");
+
+    // Phase 2: SMG4 witch appears top-left, shadowy
+    this.time.delayedCall(3500, () => {
+      this.drawSmg4Witch(smg4G, W * 0.22, CY);
+      showBox("SMG4", "Luigi, give this apple to the princess. It will make her the ugliest person in the world.", "#aaaaff");
+    });
+
+    // Phase 3: SMG4 disappears, Luigi knight enters
+    this.time.delayedCall(7500, () => {
+      smg4G.clear();
+      this.drawLuigiKnight(luigiG, W * 0.30, CY);
+      showBox("Luigi", "D-do y-you want th-this?", "#88ffaa");
+    });
+
+    // Phase 4: Choice prompt
+    this.time.delayedCall(11000, () => {
+      boxG.clear();
+      boxG.fillStyle(0x060612, 0.95).fillRoundedRect(40, boxY - 10, W - 80, boxH + 20, 8);
+      boxG.lineStyle(2, 0xffcc00, 0.9).strokeRoundedRect(40, boxY - 10, W - 80, boxH + 20, 8);
+      narr.setText("Eat the apple?\n[Z] Yes, eat it!        [X] No thanks!").setColor("#ffee88");
+      this.appleChoiceMade = false;
+      // Listen for choice
+      const checkChoice = (ev: KeyboardEvent) => {
+        if (this.appleChoiceMade) return;
+        if (ev.key === "z" || ev.key === "Z") {
+          this.appleChoiceMade = true;
+          window.removeEventListener("keydown", checkChoice);
+          luigiG.clear();
+          boxG.clear();
+          narr.setText("* You eat the apple... *").setColor("#ff6666");
+          this.time.delayedCall(1800, () => {
+            this.castleObjs.forEach(o => o.destroy());
+            this.castleObjs = [];
+            this.dying = false;
+            this.playerDie();
+          });
+        } else if (ev.key === "x" || ev.key === "X") {
+          this.appleChoiceMade = true;
+          window.removeEventListener("keydown", checkChoice);
+          luigiG.clear();
+          this.drawSmg4Witch(smg4G, W * 0.22, CY);
+          showBox("Narrator", "* You refuse! But SMG4 appears... *", "#ff9955");
+          this.time.delayedCall(3000, () => {
+            showBox("SMG4", "THEN I'LL TAKE CARE OF YOU MYSELF!", "#ff6666");
+            this.time.delayedCall(2500, () => {
+              this.cameras.main.flash(600, 255, 50, 50);
+              this.cameras.main.fadeOut(1200, 0, 0, 0);
+              this.cameras.main.once("camerafadeoutcomplete", () => {
+                this.castleObjs.forEach(o => o.destroy());
+                this.castleObjs = [];
+                this.scene.start("GameScene", {
+                  character: this.dressCharacter,
+                  worldId: 12,
+                  fromWorld: 11,
+                  dressCharacter: this.dressCharacter,
+                });
+              });
+            });
+          });
+        }
+      };
+      window.addEventListener("keydown", checkChoice);
+      // Auto-decline after 12s if no choice
+      this.time.delayedCall(12000, () => {
+        if (!this.appleChoiceMade) {
+          const fakeEv = new KeyboardEvent("keydown", { key: "x" });
+          checkChoice(fakeEv);
+        }
+      });
+    });
+    const castleSkipTransition = () => {
+      this.cameras.main.fadeOut(600, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.castleObjs.forEach(o => o.destroy());
+        this.castleObjs = [];
+        this.dying = false;
+        this.scene.start("GameScene", {
+          character: this.dressCharacter,
+          worldId: 12,
+          fromWorld: 11,
+          dressCharacter: this.dressCharacter,
+        });
+      });
+    };
+    const castleSkip = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "Escape") {
+        window.removeEventListener("keydown", castleSkip);
+        this.time.removeAllEvents();
+        this.appleChoiceMade = true;
+        castleSkipTransition();
+      }
+    };
+    push(this.add.text(640, 16, "SPACE/ESC to skip", {
+      fontSize: "12px", color: "#ffffff88", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 5).setOrigin(0.5, 0));
+    window.addEventListener("keydown", castleSkip);
+  }
+
   // ── War zone setup ───────────────────────────────────────────────────────────
 
   private setupWarZone() {
@@ -4815,56 +6304,157 @@ export class GameScene extends Phaser.Scene {
   private startOnceUponCutscene() {
     if (this.dying) return;
     this.dying = true;
+    this.onceUponSkippable = true;
 
     const W = 1280, H = 720, D = 40;
+    const CY = Math.round(H * 0.73);
     const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
       this.onceUponObjs.push(o); return o;
     };
-    const cleanup = () => {
-      this.onceUponObjs.forEach(o => o.destroy());
-      this.onceUponObjs = [];
-      this.dying = false;
-    };
-
     (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
 
-    // ── Full black backing ───────────────────────────────────────────────────
-    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    // Layers: bg (black) / room / char1 / char2 / dialogueBox / dialogueText
+    const bg   = push(this.add.graphics().setScrollFactor(0).setDepth(D));
     bg.fillStyle(0x000000, 1).fillRect(0, 0, W, H);
 
-    // ── Phase 1 – Witchy Room + SMG4 as witch ────────────────────────────────
-    const roomG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
-    this.drawWitchyRoom(roomG, W, H);
-
-    const charG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
-    this.drawSmg4Witch(charG, W / 2, Math.round(H * 0.73));
-
-    // Narrator box
-    const boxG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    const roomG  = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    const char1G = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const char2G = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const boxG   = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
     const boxH = 90, boxY = H - boxH - 14;
-    boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
-    boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
 
-    const narr = push(this.add.text(W / 2, boxY + boxH / 2,
-      "Narrator: Our story takes place in the magical land of SMG4.\nThere lived a selfish and cruel witch.",
-      { fontSize: "15px", color: "#ddddff", align: "center",
-        wordWrap: { width: W - 120 }, lineSpacing: 4 }
-    ).setScrollFactor(0).setDepth(D + 4).setOrigin(0.5, 0.5));
+    const showBox = (speaker: string, text: string, speakerColor = "#ddddff") => {
+      boxG.clear();
+      boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
+      boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
+      narr.setText(speaker ? `${speaker}: ${text}` : text);
+      narr.setColor(speakerColor);
+    };
 
-    // ── Phase 2 (after 5 s) – Princess scene ────────────────────────────────
-    this.time.delayedCall(5000, () => {
-      roomG.clear(); charG.clear();
+    const narr = push(this.add.text(W / 2, boxY + boxH / 2, "", {
+      fontSize: "15px", color: "#ddddff", align: "center",
+      wordWrap: { width: W - 120 }, lineSpacing: 4,
+    }).setScrollFactor(0).setDepth(D + 4).setOrigin(0.5, 0.5));
+
+    const skipHint = push(this.add.text(W - 16, H - 16, "Z/W/Space: skip", {
+      fontSize: "11px", color: "rgba(255,255,255,0.4)",
+    }).setScrollFactor(0).setDepth(D + 4).setOrigin(1, 1));
+    // Fade hint out after 3s
+    this.time.delayedCall(3000, () => { skipHint.setVisible(false); });
+
+    // ── Phase 1 (t=0) — witchy room, SMG4 as witch ──────────────────────────
+    this.drawWitchyRoom(roomG, W, H);
+    this.drawSmg4Witch(char1G, W / 2, CY);
+    showBox("Narrator", "Our story takes place in the magical land of SMG4.\nThere lived a selfish and cruel witch.", "#ccddff");
+
+    // ── Phase 2 (t=4500) — castle room, SMG3 normal ─────────────────────────
+    this.time.delayedCall(4500, () => {
+      roomG.clear(); char1G.clear(); char2G.clear();
       this.drawPrincessRoom(roomG, W, H);
-      this.drawSmg3Princess(charG, W / 2, Math.round(H * 0.73));
-      narr.setText("And a beautiful princess, pure of heart.");
+      this.drawSmg3Normal(char1G, W / 2, CY);
+      showBox("Narrator", "And a beautiful princess, pure of heart.", "#ccddff");
     });
 
-    // ── End (after 9.5 s) – fade out and return to theater ──────────────────
-    this.time.delayedCall(9500, () => {
-      this.cameras.main.fadeOut(1200, 0, 0, 0);
+    // ── Phase 3 (t=8000) — narrator "But something was missing…" ────────────
+    this.time.delayedCall(8000, () => {
+      showBox("Narrator", "But something was missing…", "#ccddff");
+    });
+
+    // ── Phase 3b (t=10500) — SMG3 speaks ────────────────────────────────────
+    this.time.delayedCall(10500, () => {
+      showBox("SMG3", "I want…     MONEY!!", "#dd99ff");
+    });
+
+    // ── Phase 4 (t=14000) — back to witchy room; SMG4 left, TV right ────────
+    this.time.delayedCall(14000, () => {
+      roomG.clear(); char1G.clear(); char2G.clear();
+      this.drawWitchyRoom(roomG, W, H);
+      this.drawSmg4Witch(char1G, W * 0.28, CY);
+      this.drawMrPuzzlesTV(char2G, W * 0.62, H * 0.28, 220, 160);
+      showBox("SMG4", "TV, TV on the wall... Am I the fairest of them all…", "#aabbff");
+    });
+
+    // ── Phase 5 (t=18500) — TV responds; screen shows SMG3 ──────────────────
+    this.time.delayedCall(18500, () => {
+      char2G.clear();
+      this.drawMrPuzzlesTVWithSmg3(char2G, W * 0.62, H * 0.28, 220, 160);
+      showBox("TV", "Nuh uh. Famed is thy beauty majesty!\nBut alas...there is one more fair than thee!", "#ff8844");
+    });
+
+    // ── Phase 6 (t=23000) — SMG4 rage; envelope flies ───────────────────────
+    this.time.delayedCall(23000, () => {
+      char1G.clear(); char2G.clear();
+      this.drawSmg4Witch(char1G, W * 0.28, CY);
+      showBox("SMG4", "ARGGH, Somebody's gonna die tonight!", "#ff6666");
+      // Envelope tween: starts near SMG4, flies right then off-screen
+      const env = push(this.add.graphics().setScrollFactor(0).setDepth(D + 5));
+      const drawEnv = (ex: number, ey: number) => {
+        env.clear();
+        env.fillStyle(0xeeeecc).fillRect(ex, ey, 40, 28);
+        env.lineStyle(1, 0x998866).strokeRect(ex, ey, 40, 28);
+        env.fillStyle(0xccbb88);
+        env.fillTriangle(ex, ey, ex + 20, ey + 14, ex + 40, ey);
+      };
+      drawEnv(W * 0.28 + 30, CY - 80);
+      this.tweens.add({
+        targets: { x: W * 0.28 + 30, y: CY - 80 },
+        x: W + 60, y: H * 0.3,
+        duration: 1400, ease: "Quad.easeIn",
+        onUpdate: (_t: Phaser.Tweens.Tween, target: { x: number; y: number }) => {
+          drawEnv(target.x, target.y);
+        },
+        onComplete: () => { env.clear(); },
+      });
+    });
+
+    // ── Phase 7 (t=26500) — castle room, SMG3 with envelope arriving ─────────
+    this.time.delayedCall(26500, () => {
+      roomG.clear(); char1G.clear(); char2G.clear();
+      this.drawPrincessRoom(roomG, W, H);
+      this.drawSmg3Normal(char1G, W / 2, CY);
+      // Envelope landed on SMG3 (drawn as small envelope in char2G)
+      // Big readable envelope
+      const ex = W / 2 - 55, ey = CY - 130;
+      const ew = 110, eh = 75;
+      char2G.fillStyle(0xf5f0d5).fillRect(ex, ey, ew, eh);
+      char2G.lineStyle(2, 0x998866).strokeRect(ex, ey, ew, eh);
+      char2G.fillStyle(0xddcc99);
+      char2G.fillTriangle(ex, ey, ex + ew/2, ey + eh * 0.55, ex + ew, ey);
+      char2G.lineStyle(1, 0x998866);
+      char2G.beginPath(); char2G.moveTo(ex, ey + eh); char2G.lineTo(ex + ew/2, ey + eh * 0.55); char2G.lineTo(ex + ew, ey + eh); char2G.strokePath();
+      // Letter text overlay
+      const letter = push(this.add.text(ex + ew/2, ey + eh/2 + 10, "King Bob's Ball:\nYou are invited!\nCome join the Ball!", {
+        fontSize: "14px", color: "#332200", align: "center", lineSpacing: 3,
+      }).setScrollFactor(0).setDepth(D + 5).setOrigin(0.5, 0.5));
+      showBox("", "* SMG3 is hit by the envelope and reads it *", "#aaaaaa");
+      this.time.delayedCall(2000, () => { letter.destroy(); });
+    });
+
+    // ── Phase 8 (t=30500) — SMG3 speaks ─────────────────────────────────────
+    this.time.delayedCall(30500, () => {
+      char2G.clear();
+      showBox("SMG3", "What ever shall I wear?", "#dd99ff");
+    });
+
+    // ── Phase 8b (t=33000) — Deer Mario appears ──────────────────────────────
+    this.time.delayedCall(33000, () => {
+      char2G.clear();
+      this.drawDeerMario(char2G, W * 0.75, CY);
+      showBox("Deer Mario", "Don't worry, We'll help make you a dress!", "#88ddaa");
+    });
+
+    // ── Transition to World 10 (t=36500) — Deer Mario goes to get dress ──────
+    this.time.delayedCall(36500, () => {
+      this.onceUponObjs.forEach(o => o.destroy());
+      this.onceUponObjs = [];
+      this.cameras.main.fadeOut(800, 0, 0, 0);
       this.cameras.main.once("camerafadeoutcomplete", () => {
-        cleanup();
-        this.cameras.main.fadeIn(600);
+        this.scene.start("GameScene", {
+          character: "deermario",
+          worldId: 10,
+          fromWorld: 0,
+          dressCharacter: this.character,
+        });
       });
     });
   }
@@ -4934,40 +6524,40 @@ export class GameScene extends Phaser.Scene {
     // ── Witch hat (tall black pointy hat) ─────────────────────────────────
     g.fillStyle(0x0d0d0d);
     g.fillTriangle(
-      ox + 18 * s, oy - 34 * s,   // tip
-      ox + 0  * s, oy +  5 * s,   // brim left
-      ox + 36 * s, oy +  5 * s    // brim right
+      ox + 18 * s, oy - 34 * s,
+      ox + 0  * s, oy +  5 * s,
+      ox + 36 * s, oy +  5 * s
     );
     r(-5, 2, 46, 6, 0x1a1a1a);    // wide brim
     r(5, -2, 26, 4, 0x1f6b28);    // green hat band
     ci(18, -2, 3, 0x44cc55);      // hat band gem
-    // ── TV head (green-tinted) ────────────────────────────────────────────
-    r(5,  4, 26, 16, 0x2e4a2e);
-    r(7,  6, 22, 12, 0x050f05);   // screen (dark green)
-    // Glowing menacing eyes
-    ci(13, 9, 2.5, 0xcc2200);
-    ci(23, 9, 2.5, 0xcc2200);
-    g.fillStyle(0xff5500); g.fillRect(ox + 12 * s, oy + 8 * s, 3 * s, 3 * s);
-    g.fillStyle(0xff5500); g.fillRect(ox + 22 * s, oy + 8 * s, 3 * s, 3 * s);
-    // Color bars — darker/spookier palette
-    r(7, 13, 6, 5, 0x881100); r(13, 13, 5, 5, 0x115511);
-    r(18, 13, 5, 5, 0x776600); r(23, 13, 6, 5, 0x112244);
+    // ── SMG4 face (blue cap, skin face, round eyes, brown mustache) ───────
+    r(4,  4, 28, 8, 0x2244cc);    // blue cap
+    r(1,  10, 34, 3, 0x2244cc);   // cap brim
+    r(11, 5, 14, 5, 0xffffff);    // badge background
+    r(13, 6,  2, 1, 0x2244cc);    // badge top detail
+    r(13, 7, 10, 1, 0x2244cc);    // badge mid detail
+    r(21, 8,  2, 1, 0x2244cc);    // badge bot detail
+    r(6,  11, 24, 3, 0x221100);   // dark hair
+    r(7,  12, 22, 10, 0xffcc88);  // face skin
+    ci(13, 15, 2.5, 0x111111);    // left eye
+    ci(23, 15, 2.5, 0x111111);    // right eye
+    ci(12, 14, 1.0, 0xffffff);    // left highlight
+    ci(22, 14, 1.0, 0xffffff);    // right highlight
+    r(12, 19, 12, 3, 0x6b3a1f);   // brown mustache
     // ── Dark witch robes ──────────────────────────────────────────────────
     r(5, 20, 26, 16, 0x0d1a0d);
     r(13, 20, 10,  8, 0x1a2e1a);  // shirt
-    // Bow tie – dark green
     g.fillStyle(0x0a3312);
     g.fillTriangle(ox+14*s, oy+20*s, ox+18*s, oy+23*s, ox+14*s, oy+26*s);
     g.fillTriangle(ox+22*s, oy+20*s, ox+18*s, oy+23*s, ox+22*s, oy+26*s);
-    // Arms
     r(0, 21, 6, 3, 0x0d1a0d); r(30, 21, 6, 3, 0x0d1a0d);
     r(0, 18, 5, 8, 0x1a2a1a); r(31, 18, 5, 8, 0x1a2a1a);
-    // Robe hem / pants
     r(9, 36, 18, 6, 0x080808);
     r(8, 39, 9, 3, 0x040404); r(19, 39, 9, 3, 0x040404);
   }
 
-  private drawSmg3Princess(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+  private drawSmg3Normal(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
     const s = 2.6;
     const ox = cx - Math.round(18 * s), oy = baseY - Math.round(42 * s);
     const r = (x: number, y: number, w: number, h: number, col: number) => {
@@ -4976,18 +6566,12 @@ export class GameScene extends Phaser.Scene {
     const ci = (x: number, y: number, rad: number, col: number) => {
       g.fillStyle(col); g.fillCircle(ox + x * s, oy + y * s, rad * s);
     };
-    // ── Golden tiara/crown ────────────────────────────────────────────────
-    r(10, -7, 16, 4, 0xddaa22);   // crown band
-    r(10, -10, 4, 4, 0xddaa22);   // left spike
-    r(16, -12, 4, 6, 0xffcc44);   // center spike (tallest)
-    r(22, -10, 4, 4, 0xddaa22);   // right spike
-    ci(18, -12, 2.5, 0xff3355);   // center gem
-    // ── SMG3 sprite (purple cap + skull, red eyes, goatee, purple suit) ──
+    // ── SMG3 (purple cap + skull badge, red eyes, goatee, purple suit) ────
     r(4,  0, 28, 8, 0x8822cc);    // purple cap
     r(1,  7, 34, 4, 0x8822cc);    // cap brim
-    r(14, 1,  8, 6, 0xffffff);    // skull background
-    r(15, 2,  2, 2, 0x8822cc); r(19, 2,  2, 2, 0x8822cc);
-    r(14, 5,  8, 1, 0x8822cc);    // skull teeth
+    r(14, 1,  8, 6, 0xffffff);    // skull badge background
+    r(15, 2,  2, 2, 0x8822cc); r(19, 2, 2, 2, 0x8822cc); // skull eye holes
+    r(14, 5,  8, 1, 0x8822cc);    // skull teeth row
     r(6,  9, 24, 4, 0x111100);    // dark hair
     r(8, 10, 20,12, 0xffcc88);    // face
     r(11,13,  4, 3, 0xff2200);    // red eyes
@@ -4998,14 +6582,12 @@ export class GameScene extends Phaser.Scene {
     r(4, 22, 28,14, 0x8822cc);    // purple shirt
     r(0, 26, 36,10, 0x551199);    // purple pants
     r(14,23,  8, 6, 0xffffff);    // chest skull
-    r(15,24,  2, 2, 0x8822cc); r(19,24,  2, 2, 0x8822cc);
+    r(15,24,  2, 2, 0x8822cc); r(19,24, 2, 2, 0x8822cc);
     r(14,27,  8, 1, 0x8822cc);
-    r(1, 36, 14, 6, 0x111111);    // boots
-    r(21,36, 14, 6, 0x111111);
-    // ── Princess dress (pink skirt over legs) ─────────────────────────────
-    r(-4, 26, 44, 16, 0xcc44aa);  // skirt body
-    r(-6, 36, 48,  8, 0xdd66bb);  // skirt hem
-    ci(18, 28, 3, 0xff88cc);      // skirt brooch
+    r(1, 36, 14, 6, 0x111111);    // left boot
+    r(21,36, 14, 6, 0x111111);    // right boot
+    ci(9, 39, 1.5, 0x222222);     // boot shadow L
+    ci(29, 39, 1.5, 0x222222);    // boot shadow R
   }
 
   private drawPrincessRoom(g: Phaser.GameObjects.Graphics, W: number, H: number) {
@@ -5041,6 +6623,150 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(0x6622bb).fillRect(W * 0.2, 0, W * 0.6, 18);
     g.fillStyle(0xffdd44);
     for (let bx = W * 0.2 + 10; bx < W * 0.8; bx += 40) g.fillRect(bx, 4, 20, 10);
+  }
+
+  private drawMrPuzzlesTV(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number) {
+    // TV outer casing (gray box)
+    g.fillStyle(0x888888).fillRect(x, y, w, h);
+    g.fillStyle(0x666666).fillRect(x + 4, y + 4, w - 8, h - 8);
+    // Screen
+    g.fillStyle(0x111111).fillRect(x + 10, y + 10, w - 20, h - 20);
+    const sx = x + 10, sy = y + 10, sw = w - 20, sh = h - 20;
+    // Mr. Puzzles eyes (gray rectangles with black pupils)
+    const ew = Math.round(sw * 0.2), eh = Math.round(sh * 0.28);
+    g.fillStyle(0xaaaaaa).fillRect(sx + Math.round(sw * 0.14), sy + Math.round(sh * 0.1), ew, eh);
+    g.fillStyle(0xaaaaaa).fillRect(sx + Math.round(sw * 0.64), sy + Math.round(sh * 0.1), ew, eh);
+    g.fillStyle(0x000000).fillRect(sx + Math.round(sw * 0.19), sy + Math.round(sh * 0.18), Math.round(ew * 0.5), Math.round(eh * 0.5));
+    g.fillStyle(0x000000).fillRect(sx + Math.round(sw * 0.69), sy + Math.round(sh * 0.18), Math.round(ew * 0.5), Math.round(eh * 0.5));
+    // Color-bar mouth
+    const barY = sy + Math.round(sh * 0.58), barH = Math.round(sh * 0.3), bw = Math.round(sw / 4);
+    g.fillStyle(0xff4444).fillRect(sx,         barY, bw, barH);
+    g.fillStyle(0x44ff44).fillRect(sx + bw,    barY, bw, barH);
+    g.fillStyle(0xffff44).fillRect(sx + bw*2,  barY, bw, barH);
+    g.fillStyle(0x4444ff).fillRect(sx + bw*3,  barY, bw, barH);
+    // Antenna
+    g.fillStyle(0x777777).fillRect(x + Math.round(w/2) - 3, y - 22, 6, 22);
+    g.fillStyle(0xffdd00).fillCircle(x + Math.round(w/2), y - 22, 6);
+    // Stand
+    g.fillStyle(0x555555).fillRect(x + Math.round(w/2) - 10, y + h, 20, 18);
+    g.fillStyle(0x444444).fillRect(x + Math.round(w/2) - 28, y + h + 16, 56, 6);
+  }
+
+  private drawMrPuzzlesTVWithSmg3(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number) {
+    // Draw the TV frame same as above
+    g.fillStyle(0x888888).fillRect(x, y, w, h);
+    g.fillStyle(0x666666).fillRect(x + 4, y + 4, w - 8, h - 8);
+    g.fillStyle(0x111111).fillRect(x + 10, y + 10, w - 20, h - 20);
+    const sx = x + 10, sy = y + 10, sw = w - 20, sh = h - 20;
+    // Mini SMG3 on screen: purple cap, red eyes, purple suit
+    const mx = sx + Math.round(sw * 0.3), my = sy + Math.round(sh * 0.08);
+    const ms = 0.55; // scale relative to normal sprite
+    const mr = (px: number, py: number, pw: number, ph: number, col: number) => {
+      g.fillStyle(col).fillRect(mx + Math.round(px * ms), my + Math.round(py * ms),
+        Math.max(1, Math.round(pw * ms)), Math.max(1, Math.round(ph * ms)));
+    };
+    mr(4,  0, 28, 8,  0x8822cc); // cap
+    mr(1,  7, 34, 3,  0x8822cc); // brim
+    mr(14, 1,  8, 5,  0xffffff); // skull badge
+    mr(6,  9, 24, 3,  0x221100); // hair
+    mr(8, 11, 20, 9,  0xffcc88); // face
+    mr(11,13,  4, 2,  0xff2200); // eyes
+    mr(21,13,  4, 2,  0xff2200);
+    mr(15,17,  6, 2,  0x222200); // goatee
+    mr(4, 20, 28,10,  0x8822cc); // shirt
+    mr(0, 24, 36, 8,  0x551199); // pants
+    mr(1, 32, 14, 5,  0x111111); // boots
+    mr(21,32, 14, 5,  0x111111);
+    // Antenna + stand (same as above)
+    g.fillStyle(0x777777).fillRect(x + Math.round(w/2) - 3, y - 22, 6, 22);
+    g.fillStyle(0xffdd00).fillCircle(x + Math.round(w/2), y - 22, 6);
+    g.fillStyle(0x555555).fillRect(x + Math.round(w/2) - 10, y + h, 20, 18);
+    g.fillStyle(0x444444).fillRect(x + Math.round(w/2) - 28, y + h + 16, 56, 6);
+  }
+
+  private drawDeerMario(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    const s = 2.2;
+    const ox = cx - Math.round(20 * s), oy = baseY - Math.round(50 * s);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * s, oy + y * s, w * s, h * s);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * s, oy + y * s, rad * s);
+    };
+    // ── Stub antlers (top) ────────────────────────────────────────────────
+    r(7,  0, 3, 10, 0x7a4a1a);  // left antler
+    r(5,  2, 3, 4,  0x7a4a1a);  // left branch
+    r(30, 0, 3, 10, 0x7a4a1a);  // right antler
+    r(32, 2, 3, 4,  0x7a4a1a);  // right branch
+    // ── Mario head (red cap, M badge, face, eyes, mustache) ───────────────
+    r(6,  9, 28, 8, 0xdd2200);  // red cap
+    r(3,  15, 34, 3, 0xdd2200); // cap brim
+    r(14, 10, 12, 5, 0xffffff); // M badge bg
+    r(15, 11,  2, 4, 0xdd2200); // M left leg
+    r(19, 11,  2, 4, 0xdd2200); // M right leg
+    r(17, 11,  2, 3, 0xdd2200); // M center
+    r(5, 16, 30, 4,  0x221100); // hair
+    r(7, 18, 26, 10, 0xffcc88); // face
+    ci(14, 22, 2.5, 0x222222);  // left eye
+    ci(26, 22, 2.5, 0x222222);  // right eye
+    ci(13, 21, 1.0, 0xffffff);  // L highlight
+    ci(25, 21, 1.0, 0xffffff);  // R highlight
+    r(11, 25, 18, 3, 0x6b3a1f); // brown mustache
+    // ── Deer body (reddish-brown oval + white spots) ───────────────────────
+    r(4,  30, 32, 16, 0x8b4513);  // main body
+    ci(20, 38, 10, 0x8b4513);     // body roundness
+    ci(14, 36,  3, 0xffffff);     // white spot L
+    ci(22, 33,  2, 0xffffff);     // white spot mid
+    ci(28, 37,  2, 0xffffff);     // white spot R
+    // ── Legs (4 thin legs with hooves) ───────────────────────────────────
+    r(8,  44, 4, 10, 0x7a3a10); r(9,  52, 4, 3, 0x333333);   // front-left
+    r(15, 44, 4, 10, 0x7a3a10); r(16, 52, 4, 3, 0x333333);   // front-right
+    r(22, 44, 4, 10, 0x7a3a10); r(23, 52, 4, 3, 0x333333);   // back-left
+    r(29, 44, 4, 10, 0x7a3a10); r(30, 52, 4, 3, 0x333333);   // back-right
+    // ── Short tail ────────────────────────────────────────────────────────
+    r(34, 32, 5, 4, 0xffffff);
+  }
+
+  private drawPlayerInDress(g: Phaser.GameObjects.Graphics, cx: number, baseY: number) {
+    const c = CHAR_COLORS[this.character] ?? CHAR_COLORS.mario;
+    const s = 2.6;
+    const ox = cx - Math.round(18 * s), oy = baseY - Math.round(42 * s);
+    const r = (x: number, y: number, w: number, h: number, col: number) => {
+      g.fillStyle(col); g.fillRect(ox + x * s, oy + y * s, w * s, h * s);
+    };
+    const ci = (x: number, y: number, rad: number, col: number) => {
+      g.fillStyle(col); g.fillCircle(ox + x * s, oy + y * s, rad * s);
+    };
+    // ── Gold crown ────────────────────────────────────────────────────────
+    r(10, -8, 16, 4, 0xddaa22);
+    r(10,-11,  4, 4, 0xddaa22);
+    r(16,-13,  4, 6, 0xffcc44);
+    r(22,-11,  4, 4, 0xddaa22);
+    ci(18,-13, 2, 0xff3355);
+    // ── Character head (uses player's cap color) ──────────────────────────
+    r(4,  0, 28, 8, c.cap);
+    r(1,  7, 34, 3, c.cap);
+    r(6,  9, 24, 4, 0x221100);
+    r(7, 11, 22, 9, c.skin);
+    // Generic friendly eyes
+    ci(13, 15, 2.5, 0x222222);
+    ci(23, 15, 2.5, 0x222222);
+    ci(12, 14, 1.0, 0xffffff);
+    ci(22, 14, 1.0, 0xffffff);
+    // ── White gloves ──────────────────────────────────────────────────────
+    ci(3,  25, 4, 0xffffff);
+    ci(33, 25, 4, 0xffffff);
+    // ── White bodice ──────────────────────────────────────────────────────
+    r(8, 20, 20, 10, 0xffffff);
+    // Gold brooch
+    ci(18, 23, 2.5, 0xffdd44);
+    // ── Pink ballgown skirt ───────────────────────────────────────────────
+    r(-6, 28, 48, 8,  0xff88bb);  // upper skirt
+    r(-10, 34, 56, 6, 0xff66aa);  // mid skirt
+    r(-14, 38, 64, 6, 0xff88bb);  // lower flare
+    r(-8,  40, 52, 4, 0xffaacc);  // hem highlight
+    // ── Peach-pink arms ───────────────────────────────────────────────────
+    r(0, 21, 8, 4, c.skin); r(28, 21, 8, 4, c.skin);
   }
 
   // ── Painting smoke animation ─────────────────────────────────────────────────
@@ -5250,5 +6976,474 @@ export class GameScene extends Phaser.Scene {
     // Brown boots
     r( 8, 46, 12,  8, 0x5a2e0a);
     r(22, 46, 12,  8, 0x5a2e0a);
+  }
+
+  private startTowerWindowCutscene() {
+    if (this.dying) return;
+    this.dying = true;
+    const W = 1280, H = 720, D = 50;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { this.castleObjs.push(o); return o; };
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    const overlay = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    overlay.fillStyle(0x000000, 0.7).fillRect(0, 0, W, H);
+    const boxG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    const boxH = 90, boxY = H - boxH - 14;
+    const narr = push(this.add.text(W / 2, boxY + boxH / 2, "", {
+      fontSize: "15px", color: "#ddddff", align: "center", wordWrap: { width: W - 120 },
+    }).setScrollFactor(0).setDepth(D + 2).setOrigin(0.5, 0.5));
+    const showBox = (speaker: string, text: string, color = "#ddddff") => {
+      boxG.clear();
+      boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
+      boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
+      narr.setText(speaker ? `${speaker}: ${text}` : text).setColor(color);
+    };
+    const charG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    const deerG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+
+    const CY = Math.round(H * 0.73);
+    // Player yells out
+    this.drawPlayerInDress(charG, W * 0.45, CY);
+    showBox("Princess", "HELP! Can someone save me?!", "#ffee44");
+
+    this.time.delayedCall(3000, () => {
+      this.drawDeerMario(deerG, W * 0.72, CY);
+      showBox("Deer Mario", "Nah.", "#88ffaa");
+    });
+    this.time.delayedCall(6000, () => {
+      showBox("Princess", "I'll give you a dollar... and a block of cheese!", "#ffee44");
+    });
+    const towerTransition = () => {
+      this.cameras.main.fadeOut(800, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.castleObjs.forEach(o => o.destroy()); this.castleObjs = [];
+        this.dying = false;
+        this.scene.start("GameScene", {
+          character: "deermario",
+          worldId: 13,
+          fromWorld: 12,
+          dressCharacter: this.dressCharacter,
+        });
+      });
+    };
+    this.time.delayedCall(9500, () => {
+      showBox("Deer Mario", "Yes Sir!", "#88ffaa");
+      this.time.delayedCall(2500, towerTransition);
+    });
+    const towerSkip = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "Escape") {
+        window.removeEventListener("keydown", towerSkip);
+        this.time.removeAllEvents();
+        towerTransition();
+      }
+    };
+    push(this.add.text(640, 16, "SPACE/ESC to skip", {
+      fontSize: "12px", color: "#ffffff88", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 3).setOrigin(0.5, 0));
+    window.addEventListener("keydown", towerSkip);
+  }
+
+  private startBoopkinsCutscene() {
+    if (this.dying) return;
+    this.dying = true;
+    const W = 1280, H = 720, D = 50;
+    const CY = Math.round(H * 0.73);
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { this.castleObjs.push(o); return o; };
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x000000, 1).fillRect(0, 0, W, H);
+    const roomG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    const charG  = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const char2G = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const boxG   = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    const boxH = 90, boxY = H - boxH - 14;
+    const narr = push(this.add.text(W / 2, boxY + boxH / 2, "", {
+      fontSize: "14px", color: "#ddddff", align: "center", wordWrap: { width: W - 120 },
+    }).setScrollFactor(0).setDepth(D + 4).setOrigin(0.5, 0.5));
+    const showBox = (speaker: string, text: string, color = "#ddddff") => {
+      boxG.clear();
+      boxG.fillStyle(0x060612, 0.93).fillRoundedRect(40, boxY, W - 80, boxH, 8);
+      boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, boxY, W - 80, boxH, 8);
+      narr.setText(speaker ? `${speaker}: ${text}` : text).setColor(color);
+    };
+    this.drawPrincessRoom(roomG, W, H);
+
+    // Phase 1: Player yells
+    this.drawPlayerInDress(charG, W * 0.35, CY);
+    this.drawBoopkins(char2G, W * 0.65, CY);
+    showBox("Princess", "YOU WERE GONE FOR TWELVE HOURS AND BROUGHT BACK A FISH?!", "#ff6622");
+
+    // Phase 2: Boopkins runs to tower (tween)
+    this.time.delayedCall(4000, () => {
+      char2G.clear(); roomG.clear();
+      // Outside tower scene
+      bg.clear(); bg.fillStyle(0x0a0a1a, 1).fillRect(0, 0, W, H);
+      // Draw tower
+      roomG.fillStyle(0x4a4a6a); roomG.fillRect(W * 0.6, 0, 200, H);
+      roomG.fillStyle(0x6a6a8a); roomG.fillRect(W * 0.6, 0, 200, 20);
+      for (let ti = 0; ti < 5; ti++) roomG.fillRect(W * 0.6 + 30 + ti * 30, -10, 20, 25);
+      // Fire trap at tower base
+      roomG.fillStyle(0xff4400, 0.9); roomG.fillTriangle(W * 0.6 - 5, H * 0.82, W * 0.6 + 30, H * 0.82, W * 0.6 + 12, H * 0.65);
+      roomG.fillStyle(0xff8800, 0.7); roomG.fillTriangle(W * 0.6, H * 0.78, W * 0.6 + 24, H * 0.78, W * 0.6 + 12, H * 0.66);
+      const bkRunGfx = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+      this.drawBoopkins(bkRunGfx, W * 0.2, CY);
+      showBox("Boopkins", "I'll save you!", "#88ff88");
+      this.time.delayedCall(2500, () => {
+        // Boopkins runs right toward tower
+        this.tweens.add({
+          targets: bkRunGfx, x: W * 0.55, duration: 2000, ease: "Linear",
+          onComplete: () => {
+            // Fire explosion
+            bkRunGfx.clear();
+            const flash = push(this.add.graphics().setScrollFactor(0).setDepth(D + 5));
+            flash.fillStyle(0xff4400, 0.9); flash.fillCircle(W * 0.6, CY, 50);
+            flash.fillStyle(0xffaa00, 0.8); flash.fillCircle(W * 0.6, CY, 30);
+            showBox("Narrator", "* Boopkins runs into the fire trap and dies! *", "#ff8844");
+            this.time.delayedCall(1500, () => {
+              flash.destroy();
+              // Phase 3: SMG4 appears
+              char2G.clear(); roomG.clear(); charG.clear();
+              bg.clear(); bg.fillStyle(0x0a0a14, 1).fillRect(0, 0, W, H);
+              this.drawWitchyRoom(roomG, W, H);
+              this.drawSmg4Witch(charG, W * 0.65, CY);
+              showBox("SMG4", "HAHA!! YOU'LL NEVER BE SAVED, PRINCESS!! AND I SHALL BE THE FAIREST OF THEM ALL!!!", "#aaaaff");
+              this.time.delayedCall(4500, () => {
+                charG.clear();
+                this.drawPlayerInDress(charG, W * 0.35, CY);
+                this.drawSmg4Witch(char2G, W * 0.65, CY);
+                showBox("Princess", "NO, I'M THE FAIREST!!", "#ffee44");
+                this.time.delayedCall(3500, () => {
+                  showBox("SMG4", "Let's have a competition to see who is the fairest of us all!", "#aaaaff");
+                  this.time.delayedCall(3500, boopkinsTransition);
+                });
+              });
+            });
+          },
+        });
+      });
+    });
+    var boopkinsTransition = () => {
+      this.cameras.main.fadeOut(800, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.castleObjs.forEach(o => o.destroy()); this.castleObjs = [];
+        this.dying = false;
+        this.scene.start("GameScene", {
+          character: this.dressCharacter,
+          worldId: 14,
+          fromWorld: 12,
+          dressCharacter: this.dressCharacter,
+        });
+      });
+    };
+    var boopkinsSkip = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "Escape") {
+        window.removeEventListener("keydown", boopkinsSkip);
+        this.time.removeAllEvents();
+        boopkinsTransition();
+      }
+    };
+    push(this.add.text(640, 16, "SPACE/ESC to skip", {
+      fontSize: "12px", color: "#ffffff88", stroke: "#000", strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(D + 5).setOrigin(0.5, 0));
+    window.addEventListener("keydown", boopkinsSkip);
+  }
+
+  private setupChallengeWorld() {
+    // Show challenge 1 immediately
+    this.challengePhase  = 1;
+    this.challengeWins   = 0;
+    this.challengeLosses = 0;
+    this.startChallenge1();
+  }
+
+  private cleanupChallengeObjs() {
+    this.challengeObjs.forEach(o => { try { o.destroy(); } catch(_){} });
+    this.challengeObjs = [];
+    if (this.ch3WallGroup) {
+      this.ch3WallGroup.destroy(true);
+      this.ch3WallGroup = null;
+    }
+    if (this.typeBoxHandler) {
+      window.removeEventListener("keydown", this.typeBoxHandler);
+      this.typeBoxHandler = null;
+    }
+  }
+
+  private startChallenge1() {
+    this.challengePhase = 1;
+    this.challengeResolved = false;
+    this.cleanupChallengeObjs();
+    const W = 1280, H = 720, D = 20;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { this.challengeObjs.push(o); return o; };
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x1a0a2a, 1).fillRect(0, 0, W, H);
+    // Title
+    push(this.add.text(W / 2, 30, "CHALLENGE 1: Convince the Knights!", {
+      fontSize: "22px", color: "#ffdd44", fontStyle: "bold", stroke: "#000", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    const CY = Math.round(H * 0.68);
+    const charG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 1));
+    // Cage with SMG4 and SMG3 inside
+    charG.lineStyle(5, 0xaaaaaa, 1);
+    for (let ci = 0; ci < 8; ci++) charG.strokeRect(W * 0.18 + ci * 12, CY - 200, 12, 200);
+    charG.strokeRect(W * 0.18, CY - 200, 96, 200);
+    this.drawSmg4Witch(charG, W * 0.20, CY);
+    this.drawSmg3Normal(charG, W * 0.31, CY);
+    // Luigi knights guarding
+    for (let ki = 0; ki < 3; ki++) {
+      this.drawLuigiKnight(charG, W * 0.46 + ki * 100, CY);
+    }
+    this.drawPlayerInDress(charG, W * 0.85, CY);
+
+    // Dialogue box
+    const boxG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    boxG.fillStyle(0x060612, 0.95).fillRoundedRect(40, H - 104, W - 80, 90, 8);
+    boxG.lineStyle(2, 0xaaaacc, 0.75).strokeRoundedRect(40, H - 104, W - 80, 90, 8);
+    push(this.add.text(W / 2, H - 59, "Type a message to convince the knights, then press ENTER:", {
+      fontSize: "13px", color: "#ccccff", align: "center",
+    }).setScrollFactor(0).setDepth(D + 3).setOrigin(0.5, 0.5));
+
+    // Type box
+    const typeBoxBg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    typeBoxBg.fillStyle(0x111122, 1).fillRoundedRect(W/2 - 300, H - 170, 600, 38, 6);
+    typeBoxBg.lineStyle(2, 0x8888cc, 1).strokeRoundedRect(W/2 - 300, H - 170, 600, 38, 6);
+    this.typeBoxText = "";
+    this.typeBoxObj  = push(this.add.text(W/2 - 290, H - 155, "_", {
+      fontSize: "14px", color: "#ffffff",
+    }).setScrollFactor(0).setDepth(D + 4).setOrigin(0, 0.5));
+
+    this.typeBoxHandler = (ev: KeyboardEvent) => {
+      if (this.challengePhase !== 1) return;
+      if (ev.key === "Enter") {
+        // SMG4 always wins
+        this.cleanupChallengeObjs();
+        this.challengeLosses++;
+        const W2 = 1280, H2 = 720, D2 = 20;
+        const bg2 = this.add.graphics().setScrollFactor(0).setDepth(D2); this.challengeObjs.push(bg2);
+        bg2.fillStyle(0x1a0a2a, 1).fillRect(0, 0, W2, H2);
+        const charG2 = this.add.graphics().setScrollFactor(0).setDepth(D2 + 1); this.challengeObjs.push(charG2);
+        const CY2 = Math.round(H2 * 0.68);
+        this.drawSmg4Witch(charG2, W2 * 0.35, CY2);
+        const winTxt = this.add.text(W2 / 2, H2 / 2 - 40,
+          "SMG4: Whoever saves me gets a lifetime\nsubscription to my new OnlyFans!",
+          { fontSize: "18px", color: "#ffaa44", stroke: "#000", strokeThickness: 4, align: "center", wordWrap: { width: W2 - 160 } }
+        ).setScrollFactor(0).setDepth(D2 + 2).setOrigin(0.5, 0.5); this.challengeObjs.push(winTxt);
+        const luigiG2 = this.add.graphics().setScrollFactor(0).setDepth(D2 + 1); this.challengeObjs.push(luigiG2);
+        for (let ki = 0; ki < 3; ki++) this.drawLuigiKnight(luigiG2, W2 * 0.55 + ki * 90, CY2);
+        this.time.delayedCall(3500, () => { this.startChallenge2(); });
+      } else if (ev.key === "Backspace") {
+        this.typeBoxText = this.typeBoxText.slice(0, -1);
+        this.typeBoxObj?.setText(this.typeBoxText + "_");
+      } else if (ev.key.length === 1 && this.typeBoxText.length < 60) {
+        this.typeBoxText += ev.key;
+        this.typeBoxObj?.setText(this.typeBoxText + "_");
+      }
+    };
+    window.addEventListener("keydown", this.typeBoxHandler);
+  }
+
+  private startChallenge2() {
+    this.challengePhase = 2;
+    this.challengeResolved = false;
+    this.cleanupChallengeObjs();
+    this.frogMeter = 0; this.frogHops = 0; this.lastLeftTapTime = 0;
+    const W = 1280, H = 720, D = 20;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { this.challengeObjs.push(o); return o; };
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    const bg = push(this.add.graphics().setScrollFactor(0).setDepth(D));
+    bg.fillStyle(0x224411, 1).fillRect(0, 0, W, H);
+    bg.fillStyle(0x336622); bg.fillRect(0, H * 0.7, W, H * 0.3);
+    push(this.add.text(W / 2, 30, "CHALLENGE 2: Kiss the Frog!", {
+      fontSize: "22px", color: "#88ff44", fontStyle: "bold", stroke: "#000", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+    push(this.add.text(W / 2, 70, "Tap ← SLOWLY to fill the meter. Too fast = frog hops away! (3 hops = fail)", {
+      fontSize: "13px", color: "#ccffaa", stroke: "#000", strokeThickness: 3, align: "center",
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    // Frog graphic
+    const frogG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const drawFrog = (fx: number, fy: number) => {
+      frogG.clear();
+      frogG.fillStyle(0x44bb22); frogG.fillEllipse(fx, fy, 50, 36);
+      frogG.fillStyle(0x55cc33); frogG.fillEllipse(fx, fy - 10, 36, 26);
+      frogG.fillStyle(0xffffff); frogG.fillCircle(fx - 9, fy - 16, 8); frogG.fillCircle(fx + 9, fy - 16, 8);
+      frogG.fillStyle(0x222222); frogG.fillCircle(fx - 9, fy - 16, 4); frogG.fillCircle(fx + 9, fy - 16, 4);
+      frogG.fillStyle(0xff6666); frogG.fillEllipse(fx, fy - 2, 18, 6);
+      // Back legs
+      frogG.fillStyle(0x44bb22); frogG.fillRect(fx - 30, fy + 4, 16, 8); frogG.fillRect(fx + 14, fy + 4, 16, 8);
+    };
+    let frogX = W * 0.5, frogY = H * 0.55;
+    drawFrog(frogX, frogY);
+
+    // Player in dress holding frog
+    const plrG = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    this.drawPlayerInDress(plrG, W * 0.38, Math.round(H * 0.73));
+
+    // Kiss meter
+    const meterBg = push(this.add.graphics().setScrollFactor(0).setDepth(D + 2));
+    const meterFill = push(this.add.graphics().setScrollFactor(0).setDepth(D + 3));
+    const meterLabel = push(this.add.text(W / 2, H - 120, "Kiss Meter", {
+      fontSize: "14px", color: "#ffee88", stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 3).setOrigin(0.5, 1));
+    void meterLabel;
+    meterBg.fillStyle(0x333333); meterBg.fillRoundedRect(W/2 - 200, H - 110, 400, 28, 8);
+    meterBg.lineStyle(2, 0x888888, 1); meterBg.strokeRoundedRect(W/2 - 200, H - 110, 400, 28, 8);
+
+    const hopLabel = push(this.add.text(W / 2, H - 150, "", {
+      fontSize: "14px", color: "#ff6644", stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 3).setOrigin(0.5, 1));
+
+    const updateMeter = () => {
+      meterFill.clear();
+      const pct = Math.min(this.frogMeter / 100, 1);
+      meterFill.fillStyle(pct > 0.7 ? 0xff4488 : 0x44cc88);
+      meterFill.fillRoundedRect(W/2 - 198, H - 108, 396 * pct, 24, 6);
+    };
+    updateMeter();
+
+    // Store frogG and drawFrog ref for update
+    type FrogGExt = Phaser.GameObjects.Graphics & { _drawFrog: (x: number, y: number) => void; _frogX: number; _frogY: number; _updateMeter: () => void; _hopLabel: Phaser.GameObjects.Text };
+    (frogG as FrogGExt)._drawFrog = drawFrog;
+    (frogG as FrogGExt)._frogX = frogX;
+    (frogG as FrogGExt)._frogY = frogY;
+    (frogG as FrogGExt)._updateMeter = updateMeter;
+    (frogG as FrogGExt)._hopLabel = hopLabel;
+    (this as this & { _ch2FrogG: FrogGExt })._ch2FrogG = frogG as FrogGExt;
+    void plrG;
+    void meterBg;
+  }
+
+  private startChallenge3() {
+    this.challengePhase = 3;
+    this.challengeResolved = false;
+    this.cleanupChallengeObjs();
+    this.scrollTimer   = 0;
+    this.autoScrollDone = false;
+    const W = 1280, D = 20;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => { this.challengeObjs.push(o); return o; };
+
+    push(this.add.text(W / 2, 30, "CHALLENGE 3: ESCAPE!", {
+      fontSize: "22px", color: "#ff4444", fontStyle: "bold", stroke: "#000", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+    push(this.add.text(W / 2, 60, "Survive 20 seconds! Swag and Chris are right behind you!", {
+      fontSize: "13px", color: "#ffccaa", stroke: "#000", strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(D + 1).setOrigin(0.5, 0));
+
+    // Timer HUD text
+    const timerTxt = push(this.add.text(W - 20, 30, "20s", {
+      fontSize: "24px", color: "#ffffff", fontStyle: "bold", stroke: "#000", strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(D + 2).setOrigin(1, 0));
+    (this as this & { _ch3TimerTxt: typeof timerTxt })._ch3TimerTxt = timerTxt;
+
+    // Obstacles at world positions
+    this.ch3Obstacles = [800, 1400, 2000, 2500, 3000, 3600, 4000, 4400];
+    this.ch3WallGroup = this.physics.add.staticGroup();
+    this.physics.add.collider(this.player, this.ch3WallGroup);
+    const obsG = this.add.graphics().setDepth(3); this.challengeObjs.push(obsG);
+    for (const ox of this.ch3Obstacles) {
+      const oh = 80 + Math.floor(Math.random() * 60);
+      obsG.fillStyle(0x886633); obsG.fillRect(ox - 20, W14_FL - oh, 40, oh);
+      obsG.fillStyle(0xaabb44); obsG.fillRect(ox - 22, W14_FL - oh - 6, 44, 8);
+      const wall = this.ch3WallGroup.create(ox, W14_FL - oh/2, "ground-tile") as Phaser.Physics.Arcade.Sprite;
+      wall.setDisplaySize(40, oh).setAlpha(0).refreshBody();
+    }
+
+    // Car graphic (drawn as camera-relative, follows from right)
+    this.ch3CarX = this.cameras.main.scrollX + W + 100; // starts off-right
+    const carG = this.add.graphics().setDepth(5); this.challengeObjs.push(carG);
+    (this as this & { _ch3CarG: typeof carG })._ch3CarG = carG;
+
+    // Bomb group
+    this.ch3BombGroup = this.physics.add.group();
+    this.physics.add.collider(this.player, this.ch3BombGroup as Phaser.Physics.Arcade.Group, () => {
+      if (!this.dying) {
+        this.takeDamage();
+        this.ch3BombGroup?.clear(true, true);
+      }
+    });
+    this.challengeObjs.push(this.ch3BombGroup as unknown as Phaser.GameObjects.GameObject);
+
+    // Spawn bombs every 2.5s
+    const bombTimer = this.time.addEvent({
+      delay: 2500, loop: true, callback: () => {
+        if (this.challengePhase !== 3 || this.autoScrollDone || this.dying) return;
+        if (!this.ch3BombGroup) return;
+        const bx = this.ch3CarX - 30 + (Math.random() - 0.5) * 80;
+        const bomb = this.ch3BombGroup.create(bx, W14_FL - 60, "deer-bomb") as Phaser.Physics.Arcade.Sprite;
+        bomb.setDepth(6);
+        (bomb.body as Phaser.Physics.Arcade.Body).setVelocity((this.player.x - bx) * 0.5, -300);
+      },
+    }); this.challengeObjs.push(bombTimer as unknown as Phaser.GameObjects.GameObject);
+  }
+
+  private handleChallengeWin(phase: number) {
+    if (this.challengeResolved) return;
+    this.challengeResolved = true;
+    this.challengeWins++;
+    if (this.challengeWins >= 2) {
+      // Win! World 2 complete
+      this.cleanupChallengeObjs();
+      this.dying = true;
+      const W = 1280, H = 720, D = 30;
+      const winBg = this.add.graphics().setScrollFactor(0).setDepth(D);
+      winBg.fillStyle(0x111100, 1).fillRect(0, 0, W, H);
+      this.add.text(W/2, H/2 - 40, "WORLD 2 COMPLETE!", {
+        fontSize: "36px", color: "#ffdd44", fontStyle: "bold", stroke: "#000", strokeThickness: 6,
+      }).setScrollFactor(0).setDepth(D+1).setOrigin(0.5, 0.5);
+      this.add.text(W/2, H/2 + 20, "You proved you are the fairest of them all!", {
+        fontSize: "18px", color: "#ffccee", stroke: "#000", strokeThickness: 4, align: "center",
+      }).setScrollFactor(0).setDepth(D+1).setOrigin(0.5, 0.5);
+      this.time.delayedCall(4000, () => {
+        this.cameras.main.fadeOut(1000, 0, 0, 0);
+        this.cameras.main.once("camerafadeoutcomplete", () => {
+          this.scene.start("GameScene", {
+            character: this.dressCharacter,
+            worldId: 0,
+            fromWorld: 14,
+            dressCharacter: this.dressCharacter,
+          });
+        });
+      });
+    } else if (phase === 2) {
+      this.startChallenge3();
+    }
+  }
+
+  private handleChallengeLoss() {
+    if (this.challengeResolved) return;
+    this.challengeResolved = true;
+    this.challengeLosses++;
+    this.cleanupChallengeObjs();
+    if (this.challengeLosses >= 2) {
+      // Die — respawn at challenge world
+      this.dying = true;
+      this.cameras.main.fadeOut(600, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.scene.start("GameScene", {
+          character: this.dressCharacter,
+          worldId: 14,
+          fromWorld: 12,
+          dressCharacter: this.dressCharacter,
+        });
+      });
+    } else {
+      // One loss — try next challenge
+      if (this.challengePhase === 2) {
+        this.time.delayedCall(1500, () => this.startChallenge3());
+      }
+    }
+  }
+
+  private drawSwagInCar(g: Phaser.GameObjects.Graphics, cx: number, cy: number) {
+    // Simple silhouette of Swag driving
+    g.fillStyle(0xffcc88); g.fillCircle(cx, cy - 10, 10);
+    g.fillStyle(0x3344cc); g.fillRect(cx - 8, cy, 16, 14);
+    g.fillStyle(0x223388); g.fillRect(cx - 12, cy + 4, 8, 10); // arm
+    g.fillStyle(0xffcc88); g.fillRect(cx - 18, cy + 8, 8, 6); // hand
   }
 }
